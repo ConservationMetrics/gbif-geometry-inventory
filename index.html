@@ -770,6 +770,16 @@
         background: transparent;
       }
 
+      /* Rows with a summary open the species card on click — say so. */
+      tbody tr[data-summary] {
+        cursor: pointer;
+      }
+
+      tbody tr[data-summary]:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+      }
+
       .species-card {
         position: fixed;
         z-index: 50;
@@ -787,6 +797,12 @@
 
       .species-card.visible {
         display: block;
+      }
+
+      /* Pinned by a click on pointer devices: accent border tells the user
+         the card stays put until they click away. */
+      .species-card.pinned {
+        border-color: var(--accent);
       }
 
       .species-card .card-img {

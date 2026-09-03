@@ -104,17 +104,30 @@ geojsonInput.addEventListener("change", onGeoJSONSelected);
 exportBtn.addEventListener("click", exportToXls);
 viewOnGbifBtn.addEventListener("click", openOnGbif);
 
-// Species card: hover on pointer devices, tap on touch. Shows the Wikipedia
-// thumbnail, short description, and a link to the article.
+// Species card: hover on pointer devices, tap on touch, keyboard focus plus
+// Enter/Space. Shows the Wikipedia thumbnail, short description, and links.
+// A click (or Enter) pins the card open so its links stay reachable without
+// holding the pointer on the row; clicking the row, pressing Escape, or
+// clicking anywhere else releases it.
 const speciesCard = document.createElement("div");
 speciesCard.className = "species-card";
-speciesCard.setAttribute("role", "tooltip");
+// Interactive popover, not a passive tooltip: focusable (tabindex -1) so
+// keyboard activation can hand focus to it, announced as a dialog.
+speciesCard.setAttribute("role", "dialog");
+speciesCard.setAttribute("aria-label", "Species details");
+speciesCard.tabIndex = -1;
 document.body.appendChild(speciesCard);
 
 const canHover = window.matchMedia("(hover: hover)");
+// Browsers without :focus-visible predate it and never focus rows on tap,
+// so focusin there is always keyboard and may preview unconditionally.
+const supportsFocusVisible = CSS.supports?.("selector(:focus-visible)") ?? false;
 
 resultsBody.addEventListener("mouseover", (event) => {
   if (!canHover.matches) return;
+  // A pinned card ignores the pointer entirely: hover keeps it, only an
+  // explicit click (another row, the same row, or outside) changes it.
+  if (speciesCard.classList.contains("pinned")) return;
   const row = event.target.closest("tr[data-summary]");
   if (row) showSpeciesCard(row);
 });
@@ -139,23 +152,83 @@ speciesCard.addEventListener("mouseover", cancelSpeciesCardHide);
 speciesCard.addEventListener("mouseout", (event) => {
   if (!speciesCard.contains(event.relatedTarget)) scheduleSpeciesCardHide();
 });
+speciesCard.addEventListener("focusin", cancelSpeciesCardHide);
+speciesCard.addEventListener("focusout", (event) => {
+  if (!speciesCard.contains(event.relatedTarget)) scheduleSpeciesCardHide();
+});
 
 resultsBody.addEventListener("click", (event) => {
-  if (canHover.matches) return;
   if (event.target.closest("a")) return;
   const row = event.target.closest("tr[data-summary]");
   if (!row) {
     hideSpeciesCard();
     return;
   }
+  // Pointer devices: click pins/toggles. Touch keeps the show/hide toggle.
+  if (canHover.matches) {
+    toggleSpeciesCard(row);
+    return;
+  }
+  // Only a tap-opened card toggles closed on the next tap; one opened by
+  // focus-preview or hover becomes tap-opened instead, then closes next tap.
+  if (
+    speciesCard.classList.contains("visible") &&
+    speciesCard.dataset.key === row.dataset.key &&
+    speciesCardOpener === "tap"
+  ) {
+    hideSpeciesCard();
+  } else {
+    showSpeciesCard(row, { source: "tap" });
+  }
+});
+
+// Keyboard parity for the card: focusing a row previews it like hover,
+// Enter or Space pins it like a click (focus moves onto the card so its
+// links are one Tab away), Escape closes it.
+resultsBody.addEventListener("focusin", (event) => {
+  // Restoring focus after a close re-enters here synchronously; without
+  // this guard Escape would instantly reopen what it just closed.
+  if (restoringCardFocus) return;
+  if (speciesCard.classList.contains("pinned")) return;
+  const row = event.target.closest("tr[data-summary]");
+  // :focus-visible filters to keyboard focus: taps also focus the row on
+  // touch devices, and a tap belongs to the click toggle, not a preview.
+  if (
+    row &&
+    (!supportsFocusVisible || event.target.matches(":focus-visible"))
+  ) {
+    speciesCardInvoker = row;
+    showSpeciesCard(row, { source: "focus" });
+  }
+});
+
+resultsBody.addEventListener("focusout", (event) => {
+  const row = event.target.closest("tr[data-summary]");
+  if (
+    row &&
+    !row.contains(event.relatedTarget) &&
+    !speciesCard.contains(event.relatedTarget)
+  ) {
+    scheduleSpeciesCardHide();
+  }
+});
+
+resultsBody.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const row = event.target.closest("tr[data-summary]");
+  if (!row) return;
+  event.preventDefault();
+  toggleSpeciesCard(row);
   if (
     speciesCard.classList.contains("visible") &&
     speciesCard.dataset.key === row.dataset.key
   ) {
-    hideSpeciesCard();
-  } else {
-    showSpeciesCard(row);
+    (speciesCard.querySelector(".card-links a") ?? speciesCard).focus();
   }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideSpeciesCard();
 });
 
 document.addEventListener("click", (event) => {
@@ -167,12 +240,23 @@ document.addEventListener("click", (event) => {
   }
 });
 
-window.addEventListener("scroll", hideSpeciesCard, { passive: true });
+// Capture on document, not window: the results table scrolls inside
+// .table-wrap, and element scroll events never bubble up to the window.
+// Scrolling the card's own overflow-y body must not dismiss it.
+document.addEventListener(
+  "scroll",
+  (event) => {
+    if (!speciesCard.contains(event.target)) hideSpeciesCard();
+  },
+  { passive: true, capture: true },
+);
 window.addEventListener("resize", hideSpeciesCard, { passive: true });
 
 let speciesCardHideTimer = null;
 
 function scheduleSpeciesCardHide(delay = 150) {
+  // A pinned card ignores pointer drift; only an explicit click hides it.
+  if (speciesCard.classList.contains("pinned")) return;
   clearTimeout(speciesCardHideTimer);
   speciesCardHideTimer = setTimeout(hideSpeciesCard, delay);
 }
@@ -183,14 +267,17 @@ function cancelSpeciesCardHide() {
   speciesCardHideTimer = null;
 }
 
-function showSpeciesCard(row) {
+function showSpeciesCard(row, { pin = false, source = "hover" } = {}) {
   cancelSpeciesCardHide();
   // mouseover bubbles from every child of the row; rebuilding the card each
-  // time would restart the image load. Same row while visible: nothing to do.
+  // time would restart the image load. Same row while visible: nothing to do
+  // except promoting a hover-shown card to pinned.
   if (
     speciesCard.classList.contains("visible") &&
     speciesCard.dataset.key === row.dataset.key
   ) {
+    if (pin) speciesCard.classList.add("pinned");
+    speciesCardOpener = pin ? "pin" : source;
     return;
   }
 
@@ -203,6 +290,11 @@ function showSpeciesCard(row) {
   }
 
   speciesCard.dataset.key = row.dataset.key;
+  speciesCard.setAttribute("aria-label", String(data.n || "Species details"));
+  // Hovering a different row replaces the card and releases any previous
+  // pin; only a click keeps it latched.
+  speciesCard.classList.toggle("pinned", pin);
+  speciesCardOpener = pin ? "pin" : source;
   // Wikipedia supplies what it has; GBIF fills the gaps (photo for species
   // without a thumbnail, classification, taxon and Wikidata links).
   const gbifKey = row.dataset.key;
@@ -213,7 +305,7 @@ function showSpeciesCard(row) {
     data.q ? cardLink(data.q, "Wikidata") : "",
     gbifKey
       ? cardLink(
-          `https://www.gbif.org/taxon/${encodeURIComponent(gbifKey)}`,
+          `https://www.gbif.org/species/${encodeURIComponent(gbifKey)}`,
           "GBIF",
         )
       : "",
@@ -264,9 +356,40 @@ function showSpeciesCard(row) {
   speciesCard.style.top = `${top}px`;
 }
 
+let speciesCardInvoker = null;
+let speciesCardOpener = null;
+let restoringCardFocus = false;
+
 function hideSpeciesCard() {
   cancelSpeciesCardHide();
-  speciesCard.classList.remove("visible");
+  // Keyboard activation parks focus inside the card; capture the restore
+  // target before display:none, or the browser drops focus to <body> and
+  // the next Tab restarts from the page top. preventScroll keeps the
+  // restore from yanking the invoker row back into view mid-scroll, and
+  // the flag stops the synchronous focusin from reopening the card.
+  const restoreFocus = speciesCard.contains(document.activeElement);
+  speciesCard.classList.remove("visible", "pinned");
+  if (restoreFocus) {
+    restoringCardFocus = true;
+    speciesCardInvoker?.focus({ preventScroll: true });
+    restoringCardFocus = false;
+  }
+  speciesCardInvoker = null;
+  speciesCardOpener = null;
+}
+
+// Pointer-device click and keyboard activation share this: open-and-pin,
+// or close when the same row's card is already pinned.
+function toggleSpeciesCard(row) {
+  speciesCardInvoker = row;
+  const isOpen =
+    speciesCard.classList.contains("visible") &&
+    speciesCard.dataset.key === row.dataset.key;
+  if (isOpen && speciesCard.classList.contains("pinned")) {
+    hideSpeciesCard();
+  } else {
+    showSpeciesCard(row, { pin: true });
+  }
 }
 bindDropHandlers();
 
@@ -1525,9 +1648,9 @@ function renderTable() {
       if (row.subgroup) {
         return `<tr class="group-row subgroup-row"><td colspan="2">${escapeHtml(row.subgroup)}</td></tr>`;
       }
-      const name = row.wikipediaUrl
-        ? `<a href="${escapeHtml(row.wikipediaUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.label)} <span aria-hidden="true">↗</span></a>`
-        : escapeHtml(row.label);
+      // Plain text: the species card is the click surface now. An <a> here
+      // would navigate on click and fight the pin toggle.
+      const name = escapeHtml(row.label);
       const attrs = [];
       if (row.key) attrs.push(`data-key="${escapeHtml(row.key)}"`);
       if (
@@ -1551,6 +1674,8 @@ function renderTable() {
             }),
           )}"`,
         );
+        // Focusable so keyboard users can open the card (Enter/Space).
+        attrs.push('tabindex="0"');
       }
       return `
         <tr${attrs.length ? ` ${attrs.join(" ")}` : ""}>
