@@ -1,5 +1,7 @@
 const API = "https://api.gbif.org/v1";
 const MAX_QUERY_WKT_LENGTH = 7500;
+
+// This token is domain restricted, don't bother trying to steal it!
 const MAPBOX_ACCESS_TOKEN =
   "pk.eyJ1IjoicmtlbXBlciIsImEiOiJjbWMycmZtd24wYWpvMmxwemR6MWltNzZrIn0.I_ZpY7zFkX0nZOspc32xZg";
 const FACETS = [
