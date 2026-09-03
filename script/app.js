@@ -1,5 +1,11 @@
 const API = "https://api.gbif.org/v1";
 const MAX_QUERY_WKT_LENGTH = 7500;
+const MOBILE_BREAKPOINT = 860;
+const FRAME_LEFT = 0.1;
+const FRAME_TOP = 0.2;
+const FRAME_WIDTH = 0.8;
+const FRAME_HEIGHT = 0.6;
+const WEB_MERCATOR_LAT_LIMIT = 85.051129;
 
 // This token is domain restricted, don't bother trying to steal it!
 const MAPBOX_ACCESS_TOKEN =
@@ -23,6 +29,8 @@ const submitBtn = document.getElementById("submitBtn");
 const drawHint = document.getElementById("drawHint");
 const geojsonInput = document.getElementById("geojsonInput");
 const dropOverlay = document.getElementById("dropOverlay");
+const drawFrameLayer = document.getElementById("drawFrameLayer");
+const confirmFrameBtn = document.getElementById("confirmFrameBtn");
 const mapWrap = document.querySelector(".map-wrap");
 const occurrenceCount = document.getElementById("occurrenceCount");
 const tableSearch = document.getElementById("tableSearch");
@@ -50,6 +58,7 @@ tabs.forEach((tab) => {
 
 tableSearch.addEventListener("input", renderTable);
 drawBtn.addEventListener("click", toggleDrawMode);
+confirmFrameBtn.addEventListener("click", confirmMobileFrame);
 clearBtn.addEventListener("click", clearArea);
 submitBtn.addEventListener("click", runQuery);
 geojsonInput.addEventListener("change", onGeoJSONSelected);
@@ -109,7 +118,42 @@ function initMap() {
     }
   });
 
-  window.addEventListener("resize", () => map.resize());
+  window.addEventListener("resize", () => {
+    map.resize();
+    if (drawMode && !isMobileViewport()) {
+      setMobileFrameVisible(false);
+      map.getCanvas().style.cursor = "crosshair";
+      drawHint.textContent = "Drag on the map to define your query area.";
+    } else if (drawMode && isMobileViewport()) {
+      setMobileFrameVisible(true);
+      map.getCanvas().style.cursor = "";
+      drawHint.textContent =
+        "Pan and zoom until the area fits inside the frame.";
+    }
+  });
+}
+
+function isMobileViewport() {
+  return window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches;
+}
+
+function setMobileFrameVisible(visible) {
+  drawFrameLayer.hidden = !visible;
+  if (visible) {
+    updateAreaFeature(null);
+  } else if (currentArea?.geojson) {
+    updateAreaFeature(currentArea.geojson);
+  }
+}
+
+function exitDrawMode() {
+  drawMode = false;
+  drawBtn.classList.remove("active");
+  setMobileFrameVisible(false);
+  if (map) {
+    map.getCanvas().style.cursor = "";
+  }
+  drawHint.textContent = "Draw a box or drop GeoJSON on the map.";
 }
 
 function bindDrawHandlers() {
@@ -121,14 +165,102 @@ function bindDrawHandlers() {
 function toggleDrawMode() {
   drawMode = !drawMode;
   drawBtn.classList.toggle("active", drawMode);
-  map.getCanvas().style.cursor = drawMode ? "crosshair" : "";
+
+  if (isMobileViewport()) {
+    setMobileFrameVisible(drawMode);
+    drawHint.textContent = drawMode
+      ? "Pan and zoom until the area fits inside the frame."
+      : "Draw a box or drop GeoJSON on the map.";
+    if (map) {
+      map.getCanvas().style.cursor = "";
+    }
+    return;
+  }
+
+  setMobileFrameVisible(false);
+  if (map) {
+    map.getCanvas().style.cursor = drawMode ? "crosshair" : "";
+  }
   drawHint.textContent = drawMode
     ? "Drag on the map to define your query area."
     : "Draw a box or drop GeoJSON on the map.";
 }
 
+function confirmMobileFrame() {
+  if (!map || !drawMode) return;
+
+  const canvas = map.getCanvas();
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const corners = [
+    map.unproject([w * FRAME_LEFT, h * FRAME_TOP]),
+    map.unproject([w * (FRAME_LEFT + FRAME_WIDTH), h * FRAME_TOP]),
+    map.unproject([
+      w * (FRAME_LEFT + FRAME_WIDTH),
+      h * (FRAME_TOP + FRAME_HEIGHT),
+    ]),
+    map.unproject([w * FRAME_LEFT, h * (FRAME_TOP + FRAME_HEIGHT)]),
+  ];
+  const lngs = corners.map((point) => point.lng);
+
+  if (crossesAntimeridian(lngs)) {
+    setStatus(
+      "This frame crosses the antimeridian. Pan the map and try again.",
+      true,
+    );
+    return;
+  }
+
+  const bounds = boundsFromCorners(corners);
+  if (!bounds) {
+    setStatus("Area too small. Zoom out or pan to a larger region.", true);
+    return;
+  }
+
+  setStatus("");
+  exitDrawMode();
+  setQueryArea({
+    wkt: bboxToWkt(bounds),
+    geojson: bboxFeature(bounds),
+    label: formatBounds(bounds),
+  });
+}
+
+function crossesAntimeridian(lngs) {
+  return lngs.some((lng) => lng < -180 || lng > 180);
+}
+
+function clampLatitude(lat) {
+  return Math.min(
+    Math.max(lat, -WEB_MERCATOR_LAT_LIMIT),
+    WEB_MERCATOR_LAT_LIMIT,
+  );
+}
+
+function boundsFromCorners(corners) {
+  const lngs = corners.map((point) => point.lng);
+  const lats = corners.map((point) => point.lat);
+  const west = Math.min(...lngs);
+  const east = Math.max(...lngs);
+  const south = clampLatitude(Math.min(...lats));
+  const north = clampLatitude(Math.max(...lats));
+
+  if (south >= north || west >= east) {
+    return null;
+  }
+
+  return {
+    west,
+    east,
+    south,
+    north,
+    width: east - west,
+    height: north - south,
+  };
+}
+
 function onMouseDown(event) {
-  if (!drawMode || event.originalEvent.button !== 0) return;
+  if (!drawMode || isMobileViewport() || event.originalEvent.button !== 0) return;
   event.preventDefault();
   dragStart = event.lngLat;
   map.dragPan.disable();
@@ -167,12 +299,11 @@ function finalizeDrag(endPoint) {
     geojson: bboxFeature(bounds),
     label: formatBounds(bounds),
   });
-  drawMode = false;
-  drawBtn.classList.remove("active");
-  map.getCanvas().style.cursor = "";
+  exitDrawMode();
 }
 
 function clearArea() {
+  exitDrawMode();
   currentArea = null;
   inventory = null;
   updateAreaFeature(null);
@@ -644,11 +775,7 @@ function applyGeoJSON(input, label) {
     wkt = bboxToWkt(bounds);
   }
 
-  drawMode = false;
-  drawBtn.classList.remove("active");
-  if (map) {
-    map.getCanvas().style.cursor = "";
-  }
+  exitDrawMode();
 
   setQueryArea({
     wkt,

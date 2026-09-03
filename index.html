@@ -124,6 +124,38 @@
         margin-right: 8px;
       }
 
+      .draw-frame-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        pointer-events: none;
+      }
+
+      .draw-frame-shade {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .draw-frame {
+        width: 80%;
+        height: 60%;
+        border: 2px dashed var(--accent);
+        border-radius: 4px;
+        box-shadow: 0 0 0 9999px rgba(31, 42, 36, 0.35);
+      }
+
+      .draw-frame-confirm {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        pointer-events: auto;
+      }
+
       .map-toolbar {
         display: flex;
         gap: 12px;
@@ -399,6 +431,14 @@
           <div id="map" aria-label="Map for drawing a query area"></div>
           <div class="drop-overlay" id="dropOverlay" aria-hidden="true">
             <span><i class="fa-solid fa-file-arrow-down"></i>Drop GeoJSON to set query area</span>
+          </div>
+          <div class="draw-frame-layer" id="drawFrameLayer" hidden>
+            <div class="draw-frame-shade" aria-hidden="true">
+              <div class="draw-frame" id="drawFrame"></div>
+            </div>
+            <button type="button" class="btn btn-primary draw-frame-confirm" id="confirmFrameBtn">
+              Set this area
+            </button>
           </div>
         </div>
         <div class="map-toolbar">
