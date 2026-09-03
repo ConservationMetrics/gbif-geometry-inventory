@@ -25,6 +25,11 @@ const RESOLVE_ROUTES = {
   datasetKey: (key) => `/dataset/${key}`,
   publishingOrg: (key) => `/organization/${key}`,
 };
+const WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql";
+const WIKIPEDIA_API_URL = "https://en.wikipedia.org/w/api.php";
+const WIKIPEDIA_ARTICLE_BASE = "https://en.wikipedia.org/wiki/";
+const WIKIPEDIA_TITLES_PER_REQUEST = 50;
+const WIKIMEDIA_TIMEOUT_MS = 10000;
 
 const drawBtn = document.getElementById("drawBtn");
 const clearBtn = document.getElementById("clearBtn");
@@ -85,6 +90,133 @@ submitBtn.addEventListener("click", runQuery);
 geojsonInput.addEventListener("change", onGeoJSONSelected);
 exportBtn.addEventListener("click", exportToXls);
 viewOnGbifBtn.addEventListener("click", openOnGbif);
+
+// Species card: hover on pointer devices, tap on touch. Shows the Wikipedia
+// thumbnail, short description, and a link to the article.
+const speciesCard = document.createElement("div");
+speciesCard.className = "species-card";
+speciesCard.setAttribute("role", "tooltip");
+document.body.appendChild(speciesCard);
+
+const canHover = window.matchMedia("(hover: hover)");
+
+resultsBody.addEventListener("mouseover", (event) => {
+  if (!canHover.matches) return;
+  const row = event.target.closest("tr[data-summary]");
+  if (row) showSpeciesCard(row);
+});
+
+// The card floats below the row, outside it in the DOM, so moving the
+// pointer from row to card fires mouseout on the row. Hiding must be
+// delayed and cancellable, or the card (and its Wikipedia link) could
+// never be reached on pointer devices.
+resultsBody.addEventListener("mouseout", (event) => {
+  if (!canHover.matches) return;
+  const row = event.target.closest("tr[data-summary]");
+  if (
+    row &&
+    !row.contains(event.relatedTarget) &&
+    !speciesCard.contains(event.relatedTarget)
+  ) {
+    scheduleSpeciesCardHide();
+  }
+});
+
+speciesCard.addEventListener("mouseover", cancelSpeciesCardHide);
+speciesCard.addEventListener("mouseout", (event) => {
+  if (!speciesCard.contains(event.relatedTarget)) scheduleSpeciesCardHide();
+});
+
+resultsBody.addEventListener("click", (event) => {
+  if (canHover.matches) return;
+  if (event.target.closest("a")) return;
+  const row = event.target.closest("tr[data-summary]");
+  if (!row) {
+    hideSpeciesCard();
+    return;
+  }
+  if (
+    speciesCard.classList.contains("visible") &&
+    speciesCard.dataset.key === row.dataset.key
+  ) {
+    hideSpeciesCard();
+  } else {
+    showSpeciesCard(row);
+  }
+});
+
+document.addEventListener("click", (event) => {
+  if (
+    !speciesCard.contains(event.target) &&
+    !event.target.closest("#resultsBody")
+  ) {
+    hideSpeciesCard();
+  }
+});
+
+window.addEventListener("scroll", hideSpeciesCard, { passive: true });
+window.addEventListener("resize", hideSpeciesCard, { passive: true });
+
+let speciesCardHideTimer = null;
+
+function scheduleSpeciesCardHide(delay = 150) {
+  clearTimeout(speciesCardHideTimer);
+  speciesCardHideTimer = setTimeout(hideSpeciesCard, delay);
+}
+
+function cancelSpeciesCardHide() {
+  if (speciesCardHideTimer === null) return;
+  clearTimeout(speciesCardHideTimer);
+  speciesCardHideTimer = null;
+}
+
+function showSpeciesCard(row) {
+  cancelSpeciesCardHide();
+  // mouseover bubbles from every child of the row; rebuilding the card each
+  // time would restart the image load. Same row while visible: nothing to do.
+  if (
+    speciesCard.classList.contains("visible") &&
+    speciesCard.dataset.key === row.dataset.key
+  ) {
+    return;
+  }
+
+  let data;
+  try {
+    data = JSON.parse(row.dataset.summary);
+  } catch {
+    hideSpeciesCard();
+    return;
+  }
+
+  speciesCard.dataset.key = row.dataset.key;
+  speciesCard.innerHTML = `
+    ${data.t ? `<div class="card-img"><img src="${escapeHtml(data.t)}" alt="" referrerpolicy="no-referrer" /></div>` : ""}
+    <div class="card-name">${escapeHtml(String(data.n ?? ""))}</div>
+    ${data.d ? `<p class="card-desc">${escapeHtml(data.d)}</p>` : ""}
+    ${data.w ? `<a class="card-link" href="${escapeHtml(data.w)}" target="_blank" rel="noopener noreferrer">Wikipedia ↗</a>` : ""}
+  `;
+  speciesCard.classList.add("visible");
+
+  const pad = 12;
+  const rowRect = row.getBoundingClientRect();
+  const cardRect = speciesCard.getBoundingClientRect();
+  const left = Math.max(
+    pad,
+    Math.min(rowRect.left, window.innerWidth - cardRect.width - pad),
+  );
+  let top = rowRect.bottom + 8;
+  if (top + cardRect.height > window.innerHeight - pad) {
+    top = Math.max(pad, rowRect.top - cardRect.height - 8);
+  }
+  speciesCard.style.left = `${left}px`;
+  speciesCard.style.top = `${top}px`;
+}
+
+function hideSpeciesCard() {
+  cancelSpeciesCardHide();
+  speciesCard.classList.remove("visible");
+}
 bindDropHandlers();
 
 initMap();
@@ -464,7 +596,15 @@ async function loadSpeciesInventory(wkt) {
     const speciesCounts = await fetchAllFacetValues(wkt, "speciesKey");
     inventory.totals.species = speciesCounts.length;
     updateTabLabels(inventory.totals);
-    inventory.species = await enrich("SPECIES_KEY", speciesCounts, true);
+    const rawSpecies = await enrich("SPECIES_KEY", speciesCounts, true);
+
+    // One shared Wikimedia budget covers link resolution and summaries, so
+    // slow secondary services can only ever delay species loading by one
+    // timeout window in total.
+    const wikiDeadline = Date.now() + WIKIMEDIA_TIMEOUT_MS;
+    const species = await enrichSpeciesWithWikipedia(rawSpecies, wikiDeadline);
+    await attachWikipediaSummaries(species, wikiDeadline);
+    inventory.species = species;
   } catch (error) {
     inventory.speciesError = formatQueryError(error, wkt);
   } finally {
@@ -568,7 +708,10 @@ async function enrich(field, counts, resolve) {
 
   return counts.map((entry, index) => ({
     key: entry.name,
-    name: names[index],
+    name: names[index].name,
+    canonical: names[index].canonical,
+    kingdom: names[index].kingdom,
+    taxonClass: names[index].taxonClass,
     count: entry.count,
   }));
 }
@@ -593,16 +736,335 @@ async function mapPool(items, mapper, concurrency) {
 
 async function resolveName(kind, key) {
   const route = RESOLVE_ROUTES[kind]?.(key);
-  if (!route) return key;
+  if (!route) return { name: key, canonical: null, kingdom: null, taxonClass: null };
 
   try {
     const data = await getJson(route);
-    return data.scientificName || data.title || key;
+    return {
+      name: data.scientificName || data.title || key,
+      canonical: kind === "speciesKey" ? data.canonicalName || null : null,
+      kingdom: kind === "speciesKey" ? data.kingdom || null : null,
+      taxonClass: kind === "speciesKey" ? data.class || null : null,
+    };
   } catch {
-    return key;
+    return { name: key, canonical: null, kingdom: null, taxonClass: null };
   }
 }
 
+// Wikipedia enrichment is best-effort: any Wikimedia failure leaves the
+// GBIF species untouched with wikipediaUrl null, never fails the inventory.
+// One shared deadline bounds the total wait across both resolution phases.
+async function enrichSpeciesWithWikipedia(
+  species,
+  deadline = Date.now() + WIKIMEDIA_TIMEOUT_MS,
+) {
+  const enriched = species.map((item) => ({ ...item, wikipediaUrl: null }));
+  if (!enriched.length) return enriched;
+
+  try {
+    const urlsByGbifId = await wikipediaUrlsByGbifId(enriched, deadline);
+    for (const item of enriched) {
+      const url = urlsByGbifId.get(String(item.key));
+      if (url) item.wikipediaUrl = url;
+    }
+  } catch {
+    // Keep GBIF results as-is.
+  }
+
+  try {
+    const unresolved = [
+      ...new Map(
+        enriched
+          .filter(
+            (item) =>
+              !item.wikipediaUrl &&
+              ((item.canonical && item.canonical !== item.key) ||
+                (item.name && item.name !== item.key)),
+          )
+          .map((item) => [item.canonical || item.name, item]),
+      ).values(),
+    ];
+    if (!unresolved.length) return enriched;
+
+    const urlsByTitle = await wikipediaUrlsByTitle(
+      unresolved.map((item) => item.canonical || item.name),
+      deadline,
+    );
+    // Iterate every still-unresolved species: several keys can share one
+    // canonical name, and all of them get the verified article URL.
+    for (const item of enriched) {
+      if (item.wikipediaUrl) continue;
+      const url = urlsByTitle.get(item.canonical || item.name);
+      if (url) item.wikipediaUrl = url;
+    }
+  } catch {
+    // Fallback is optional too.
+  }
+
+  return enriched;
+}
+
+// GBIF taxon ID -> Wikidata item -> English Wikipedia sitelink, batched
+// into a single SPARQL request. When an ID matches both the legacy P846 and
+// the newer P14607 statement, the P14607 binding wins deterministically.
+async function wikipediaUrlsByGbifId(species, deadline) {
+  const urls = new Map();
+  const ids = [
+    ...new Set(species.map((item) => String(item.key)).filter(isSafeTaxonId)),
+  ];
+  if (!ids.length) return urls;
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return urls;
+
+  const values = ids.map((id) => `"${id}"`).join(" ");
+  // The matched property is selected as a variable (VALUES on ?prop) instead
+  // of BIND inside a UNION branch: Blazegraph hangs on the latter form.
+  const query = `SELECT ?gbif ?article ?prop WHERE {
+  VALUES ?gbif { ${values} }
+  ?taxon ?prop ?gbif.
+  VALUES ?prop { wdt:P14607 wdt:P846 }
+  ?article schema:about ?taxon;
+    schema:isPartOf <https://en.wikipedia.org/>.
+}`;
+  const params = new URLSearchParams({ query, format: "json" });
+  const data = await fetchJsonWithTimeout(
+    `${WIKIDATA_SPARQL_URL}?${params}`,
+    remaining,
+    { headers: { Accept: "application/sparql-results+json" } },
+  );
+
+  const legacy = new Map();
+  for (const binding of data?.results?.bindings || []) {
+    const id = binding.gbif?.value;
+    const url = wikipediaArticleUrl(binding.article?.value);
+    if (!isSafeTaxonId(id) || !url) continue;
+    if (binding.prop?.value.endsWith("/P14607")) {
+      if (!urls.has(id)) urls.set(id, url);
+    } else if (!urls.has(id) && !legacy.has(id)) {
+      legacy.set(id, url);
+    }
+  }
+  for (const [id, url] of legacy) {
+    if (!urls.has(id)) urls.set(id, url);
+  }
+  return urls;
+}
+
+// Scientific-name fallback: batched Wikipedia API lookup that follows
+// normalization and redirects, so only verified article URLs come back.
+async function wikipediaUrlsByTitle(titles, deadline) {
+  const urls = new Map();
+  const unique = [...new Set(titles.filter(Boolean))];
+
+  for (let i = 0; i < unique.length; i += WIKIPEDIA_TITLES_PER_REQUEST) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const batch = unique.slice(i, i + WIKIPEDIA_TITLES_PER_REQUEST);
+    const params = new URLSearchParams({
+      action: "query",
+      format: "json",
+      formatversion: "2",
+      redirects: "1",
+      origin: "*",
+      titles: batch.join("|"),
+    });
+
+    let data;
+    try {
+      data = await fetchJsonWithTimeout(
+        `${WIKIPEDIA_API_URL}?${params}`,
+        remaining,
+      );
+    } catch {
+      continue;
+    }
+
+    const hops = new Map();
+    for (const link of data?.query?.normalized || []) {
+      hops.set(link.from, link.to);
+    }
+    for (const link of data?.query?.redirects || []) {
+      hops.set(link.from, link.to);
+    }
+    const pages = new Map(
+      (data?.query?.pages || []).map((page) => [page.title, page]),
+    );
+
+    for (const title of batch) {
+      const page = pages.get(followHops(hops, title));
+      if (!page || page.missing || page.invalid || page.ns !== 0) continue;
+      const url = wikipediaArticleUrl(wikipediaArticleUrlFromTitle(page.title));
+      if (url) urls.set(title, url);
+    }
+  }
+
+  return urls;
+}
+
+// Wikipedia thumbnails + short descriptions for the species card, batched
+// per 50 titles. Best-effort like the links: failures leave the card empty.
+async function attachWikipediaSummaries(
+  species,
+  deadline = Date.now() + WIKIMEDIA_TIMEOUT_MS,
+) {
+  const withTitle = species
+    .filter((item) => item.wikipediaUrl)
+    .map((item) => [wikipediaTitleFromUrl(item.wikipediaUrl), item])
+    .filter(([title]) => Boolean(title));
+
+  try {
+    for (let i = 0; i < withTitle.length; i += WIKIPEDIA_TITLES_PER_REQUEST) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const batch = withTitle.slice(i, i + WIKIPEDIA_TITLES_PER_REQUEST);
+      const params = new URLSearchParams({
+        action: "query",
+        format: "json",
+        formatversion: "2",
+        redirects: "1",
+        origin: "*",
+        prop: "pageimages|pageterms",
+        piprop: "thumbnail",
+        pithumbsize: "240",
+        wbptterms: "description",
+        titles: batch.map(([title]) => title).join("|"),
+      });
+
+      let data;
+      try {
+        data = await fetchJsonWithTimeout(
+          `${WIKIPEDIA_API_URL}?${params}`,
+          remaining,
+        );
+      } catch {
+        continue;
+      }
+
+      const hops = new Map();
+      for (const link of data?.query?.normalized || []) {
+        hops.set(link.from, link.to);
+      }
+      for (const link of data?.query?.redirects || []) {
+        hops.set(link.from, link.to);
+      }
+      const pages = new Map(
+        (data?.query?.pages || []).map((page) => [page.title, page]),
+      );
+
+      for (const [title, item] of batch) {
+        const page = pages.get(followHops(hops, title));
+        const thumbnail = wikimediaImageUrl(page?.thumbnail?.source);
+        const description = page?.terms?.description?.[0];
+        if (thumbnail) item.thumbnail = thumbnail;
+        if (description) item.description = String(description);
+      }
+    }
+  } catch {
+    // Summaries are optional too.
+  }
+}
+
+function wikipediaTitleFromUrl(url) {
+  if (typeof url !== "string") return null;
+  if (!url.startsWith(WIKIPEDIA_ARTICLE_BASE)) return null;
+  try {
+    return decodeURIComponent(
+      url.slice(WIKIPEDIA_ARTICLE_BASE.length),
+    ).replace(/_/g, " ");
+  } catch {
+    return null;
+  }
+}
+
+// Only HTTPS upload.wikimedia.org images are rendered in the species card.
+function wikimediaImageUrl(url) {
+  if (typeof url !== "string") return null;
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "https:" || parsed.host !== "upload.wikimedia.org") {
+    return null;
+  }
+  return parsed.toString();
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function wikipediaArticleUrlFromTitle(title) {
+  return (
+    WIKIPEDIA_ARTICLE_BASE +
+    encodeURIComponent(String(title).trim().replace(/ /g, "_"))
+  );
+}
+
+// Accepts only HTTPS English Wikipedia article URLs and rebuilds them from
+// the decoded title, so externally supplied URLs cannot carry odd payloads.
+function wikipediaArticleUrl(url) {
+  if (typeof url !== "string") return null;
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "https:" || parsed.host !== "en.wikipedia.org") {
+    return null;
+  }
+  if (!parsed.pathname.startsWith("/wiki/")) return null;
+
+  let title;
+  try {
+    title = decodeURIComponent(parsed.pathname.slice("/wiki/".length));
+  } catch {
+    return null;
+  }
+
+  title = title.replace(/ /g, "_");
+  if (
+    !title ||
+    title.startsWith("/") ||
+    title.includes("\\") ||
+    title.includes("//")
+  ) {
+    return null;
+  }
+
+  return WIKIPEDIA_ARTICLE_BASE + encodeURIComponent(title);
+}
+
+function followHops(hops, title) {
+  const seen = new Set();
+  while (hops.has(title) && !seen.has(title)) {
+    seen.add(title);
+    title = hops.get(title);
+  }
+  return title;
+}
+
+// IDs go into a SPARQL string literal, so only plain alphanumeric values are
+// allowed: legacy GBIF keys are numeric, post-2026 P14607 keys also carry
+// letters (e.g. 49XBD). Anything else fails closed and skips the ID lookup.
+function isSafeTaxonId(value) {
+  return /^[0-9A-Za-z]{1,20}$/.test(String(value));
+}
 async function getJson(path, params = {}) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -700,6 +1162,9 @@ function renderTable() {
     return;
   }
 
+  hideSpeciesCard();
+
+
   if (activeTab === "species") {
     if (speciesLoading) {
       tablePagination.hidden = true;
@@ -717,32 +1182,68 @@ function renderTable() {
 
   const rows = rowsForTab(activeTab);
   const filter = tableSearch.value.trim().toLowerCase();
-  const filtered = filter
-    ? rows.filter((row) => row.label.toLowerCase().includes(filter))
-    : rows;
 
-  if (!filtered.length) {
+  // Keep a group header only when at least one of its species survives the
+  // filter: headers accumulate and flush with their first surviving row;
+  // headers left pending at the end belonged to fully filtered-out groups.
+  const visible = [];
+  let pendingHeaders = [];
+  for (const row of rows) {
+    if (row.group || row.subgroup) {
+      pendingHeaders.push(row);
+      continue;
+    }
+    if (!filter || row.label.toLowerCase().includes(filter)) {
+      visible.push(...pendingHeaders, row);
+      pendingHeaders = [];
+    }
+  }
+
+  if (!visible.length) {
     tablePagination.hidden = true;
     resultsBody.innerHTML =
       '<tr class="placeholder-row"><td colspan="2">No rows match your filter.</td></tr>';
     return;
   }
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / TABLE_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(visible.length / TABLE_PAGE_SIZE));
   tablePage = Math.min(tablePage, totalPages - 1);
   const start = tablePage * TABLE_PAGE_SIZE;
-  const end = Math.min(start + TABLE_PAGE_SIZE, filtered.length);
-  const pageRows = filtered.slice(start, end);
+  const end = Math.min(start + TABLE_PAGE_SIZE, visible.length);
+  const pageRows = visible.slice(start, end);
 
-  resultsBody.innerHTML = pageRows
-    .map(
-      (row) => `
-        <tr>
-          <td>${escapeHtml(row.label)}</td>
+  resultsBody.innerHTML = visible
+    .map((row) => {
+      if (row.group) {
+        return `<tr class="group-row"><td colspan="2">${escapeHtml(row.group)}</td></tr>`;
+      }
+      if (row.subgroup) {
+        return `<tr class="group-row subgroup-row"><td colspan="2">${escapeHtml(row.subgroup)}</td></tr>`;
+      }
+      const name = row.wikipediaUrl
+        ? `<a href="${escapeHtml(row.wikipediaUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.label)} <span aria-hidden="true">↗</span></a>`
+        : escapeHtml(row.label);
+      const attrs = [];
+      if (row.key) attrs.push(`data-key="${escapeHtml(row.key)}"`);
+      if (row.thumbnail || row.description) {
+        attrs.push(
+          `data-summary="${escapeHtml(
+            JSON.stringify({
+              n: row.label,
+              t: row.thumbnail || "",
+              d: row.description || "",
+              w: row.wikipediaUrl || "",
+            }),
+          )}"`,
+        );
+      }
+      return `
+        <tr${attrs.length ? ` ${attrs.join(" ")}` : ""}>
+          <td>${name}</td>
           <td class="col-count">${formatCount(row.count)}</td>
         </tr>
-      `,
-    )
+      `;
+    })
     .join("");
 
   tablePagination.hidden = false;
@@ -750,7 +1251,7 @@ function renderTable() {
   tableNext.disabled = tablePage >= totalPages - 1;
   tablePageInfo.textContent = `${formatCount(start + 1)}–${formatCount(
     end,
-  )} of ${formatCount(filtered.length)}`;
+  )} of ${formatCount(visible.length)}`;
 }
 
 function rowsForTab(tab) {
@@ -762,12 +1263,96 @@ function rowsForTab(tab) {
     basis_of_record: ["basisOfRecord"],
   };
 
-  return itemsForTab(tab).map((item) => ({
-    label: String(
-      labelKeys[tab].map((key) => item[key]).find(Boolean) ?? item.key ?? "",
-    ),
+  if (tab === "species") return groupedSpeciesRows(itemsForTab(tab));
+
+  return itemsForTab(tab).map((item) => {
+    const row = {
+      label: String(
+        labelKeys[tab].map((key) => item[key]).find(Boolean) ?? item.key ?? "",
+      ),
+      count: item.count,
+    };
+    return row;
+  });
+}
+
+// Species rows grouped by kingdom, with class subgroups inside Animalia.
+// Kingdoms keep a familiar order, then alphabetical; classes sort by row
+// count so the biggest groups (Aves, Insecta) sit on top.
+const KINGDOM_ORDER = [
+  "Animalia",
+  "Plantae",
+  "Fungi",
+  "Chromista",
+  "Protozoa",
+  "Bacteria",
+  "Archaea",
+  "Viruses",
+];
+
+function groupedSpeciesRows(items) {
+  const byKingdom = new Map();
+  for (const item of items) {
+    const kingdom = item.kingdom || "Other";
+    if (!byKingdom.has(kingdom)) byKingdom.set(kingdom, []);
+    byKingdom.get(kingdom).push(item);
+  }
+
+  const known = KINGDOM_ORDER.filter((kingdom) => byKingdom.has(kingdom));
+  const rest = [...byKingdom.keys()]
+    .filter((kingdom) => !KINGDOM_ORDER.includes(kingdom) && kingdom !== "Other")
+    .sort();
+  // "Other" (species whose GBIF lookup failed) always sorts last.
+  if (byKingdom.has("Other")) rest.push("Other");
+
+  const rows = [];
+  for (const kingdom of [...known, ...rest]) {
+    const kingdomItems = byKingdom.get(kingdom);
+    rows.push({ group: `${kingdom} (${kingdomItems.length})` });
+    if (kingdom === "Animalia") {
+      rows.push(...classSubgroups(kingdomItems));
+    } else {
+      rows.push(...kingdomItems.map(speciesRow));
+    }
+  }
+  return rows;
+}
+
+function classSubgroups(items) {
+  const byClass = new Map();
+  for (const item of items) {
+    const taxonClass = item.taxonClass || "Other";
+    if (!byClass.has(taxonClass)) byClass.set(taxonClass, []);
+    byClass.get(taxonClass).push(item);
+  }
+
+  const names = [...byClass.keys()]
+    .filter((taxonClass) => taxonClass !== "Other")
+    .sort(
+      (a, b) =>
+        byClass.get(b).length - byClass.get(a).length || a.localeCompare(b),
+    );
+  // "Other" (missing class in the GBIF lookup) always sorts last.
+  if (byClass.has("Other")) names.push("Other");
+
+  const rows = [];
+  for (const taxonClass of names) {
+    rows.push({ subgroup: `${taxonClass} (${byClass.get(taxonClass).length})` });
+    rows.push(...byClass.get(taxonClass).map(speciesRow));
+  }
+  return rows;
+}
+
+function speciesRow(item) {
+  const row = {
+    label: String(item.name || item.key),
     count: item.count,
-  }));
+    key: String(item.key),
+  };
+  if (item.wikipediaUrl) row.wikipediaUrl = item.wikipediaUrl;
+  if (item.thumbnail) row.thumbnail = item.thumbnail;
+  if (item.description) row.description = item.description;
+  return row;
 }
 
 function itemsForTab(tab) {
@@ -779,6 +1364,20 @@ function itemsForTab(tab) {
 }
 
 const EXPORT_SHEETS = [
+  {
+    tab: "species",
+    name: "Species",
+    headers: ["Name", "Kingdom", "Class", "Key", "Count", "Wikipedia"],
+    rows: (items) =>
+      items.map((item) => [
+        item.name || item.key,
+        item.kingdom || "",
+        item.taxonClass || "",
+        item.key,
+        item.count,
+        item.wikipediaUrl || "",
+      ]),
+  },
   {
     tab: "datasets",
     name: "Datasets",
