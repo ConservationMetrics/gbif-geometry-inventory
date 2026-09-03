@@ -315,8 +315,27 @@
       }
 
       .table-wrap {
-        padding: 14px 18px 18px;
+        padding: 14px 18px 0;
         overflow: auto;
+      }
+
+      .table-pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 18px 18px;
+      }
+
+      .table-pagination-info {
+        color: var(--muted);
+        font-size: 0.92rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .table-pagination-actions {
+        display: flex;
+        gap: 8px;
       }
 
       table {
@@ -359,6 +378,9 @@
       }
 
       .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
         min-height: 1.2rem;
         margin: 0;
         padding: 0 18px 16px;
@@ -368,6 +390,22 @@
 
       .status.error {
         color: var(--danger);
+      }
+
+      .status-spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid var(--line);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: status-spin 0.7s linear infinite;
+        flex-shrink: 0;
+      }
+
+      @keyframes status-spin {
+        to {
+          transform: rotate(360deg);
+        }
       }
 
       .footer {
@@ -510,7 +548,22 @@
           </table>
         </div>
 
-        <p class="status" id="statusMessage" aria-live="polite"></p>
+        <div class="table-pagination" id="tablePagination" hidden>
+          <span class="table-pagination-info" id="tablePageInfo">1–100 of 100</span>
+          <div class="table-pagination-actions">
+            <button type="button" class="btn btn-secondary" id="tablePrev">
+              Previous
+            </button>
+            <button type="button" class="btn btn-secondary" id="tableNext">
+              Next
+            </button>
+          </div>
+        </div>
+
+        <p class="status" id="statusMessage" aria-live="polite">
+          <span class="status-spinner" id="statusSpinner" hidden aria-hidden="true"></span>
+          <span id="statusText"></span>
+        </p>
       </section>
     </main>
 

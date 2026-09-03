@@ -10,13 +10,16 @@ const WEB_MERCATOR_LAT_LIMIT = 85.051129;
 // This token is domain restricted, don't bother trying to steal it!
 const MAPBOX_ACCESS_TOKEN =
   "pk.eyJ1IjoicmtlbXBlciIsImEiOiJjbWMycmZtd24wYWpvMmxwemR6MWltNzZrIn0.I_ZpY7zFkX0nZOspc32xZg";
-const FACETS = [
-  "speciesKey",
-  "datasetKey",
-  "publishingOrg",
-  "year",
-  "basisOfRecord",
-];
+const FACET_PAGE_SIZE = 1000;
+const TABLE_PAGE_SIZE = 100;
+const RESOLVE_CONCURRENCY = 8;
+const TAB_LABELS = {
+  species: "Species",
+  datasets: "Datasets",
+  publishers: "Publishers",
+  years: "Years",
+  basis_of_record: "Basis of record",
+};
 const RESOLVE_ROUTES = {
   speciesKey: (key) => `/species/${key}`,
   datasetKey: (key) => `/dataset/${key}`,
@@ -36,7 +39,13 @@ const occurrenceCount = document.getElementById("occurrenceCount");
 const tableSearch = document.getElementById("tableSearch");
 const exportBtn = document.getElementById("exportBtn");
 const resultsBody = document.getElementById("resultsBody");
+const tablePagination = document.getElementById("tablePagination");
+const tablePrev = document.getElementById("tablePrev");
+const tableNext = document.getElementById("tableNext");
+const tablePageInfo = document.getElementById("tablePageInfo");
 const statusMessage = document.getElementById("statusMessage");
+const statusSpinner = document.getElementById("statusSpinner");
+const statusText = document.getElementById("statusText");
 const tabs = document.querySelectorAll(".tab");
 
 let map;
@@ -45,18 +54,31 @@ let dragStart = null;
 let currentArea = null;
 let inventory = null;
 let activeTab = "species";
+let tablePage = 0;
 let dragDepth = 0;
 
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     activeTab = tab.dataset.tab;
+    tablePage = 0;
     tabs.forEach((button) => button.classList.toggle("active", button === tab));
     tableSearch.value = "";
     renderTable();
   });
 });
 
-tableSearch.addEventListener("input", renderTable);
+tableSearch.addEventListener("input", () => {
+  tablePage = 0;
+  renderTable();
+});
+tablePrev.addEventListener("click", () => {
+  tablePage -= 1;
+  renderTable();
+});
+tableNext.addEventListener("click", () => {
+  tablePage += 1;
+  renderTable();
+});
 drawBtn.addEventListener("click", toggleDrawMode);
 confirmFrameBtn.addEventListener("click", confirmMobileFrame);
 clearBtn.addEventListener("click", clearArea);
@@ -313,7 +335,10 @@ function clearArea() {
   tableSearch.value = "";
   exportBtn.disabled = true;
   geojsonInput.value = "";
+  tablePage = 0;
+  tablePagination.hidden = true;
   occurrenceCount.textContent = "—";
+  resetTabLabels();
   resultsBody.innerHTML =
     '<tr class="placeholder-row"><td colspan="2">Draw an area or drop GeoJSON, then query GBIF.</td></tr>';
   drawHint.textContent = "Draw a box or drop GeoJSON on the map.";
@@ -348,8 +373,9 @@ async function runQuery() {
 
   try {
     const { wkt, usedBboxFallback } = wktForQuery(currentArea);
-    inventory = await searchInventory(wkt, 50, true);
+    inventory = await searchInventory(wkt, true);
     occurrenceCount.textContent = formatCount(inventory.occurrence_count);
+    updateTabLabels(inventory.totals);
     tableSearch.disabled = false;
     exportBtn.disabled = false;
     renderTable();
@@ -369,37 +395,100 @@ async function runQuery() {
   }
 }
 
-async function searchInventory(wkt, facetLimit, resolve) {
-  const payload = await getJson("/occurrence/search", {
+async function searchInventory(wkt, resolve) {
+  setStatus("Fetching all results from GBIF…");
+
+  const countPayload = await getJson("/occurrence/search", {
     geometry: wkt,
     limit: 0,
-    facet: FACETS,
-    facetLimit,
   });
 
-  const facets = facetMap(payload);
+  const [
+    speciesCounts,
+    datasetCounts,
+    publisherCounts,
+    yearCounts,
+    basisCounts,
+  ] = await Promise.all([
+    fetchAllFacetValues(wkt, "speciesKey"),
+    fetchAllFacetValues(wkt, "datasetKey"),
+    fetchAllFacetValues(wkt, "publishingOrg"),
+    fetchAllFacetValues(wkt, "year"),
+    fetchAllFacetValues(wkt, "basisOfRecord"),
+  ]);
+
+  setStatus("Resolving names…", false, true);
 
   const [species, datasets, publishers] = await Promise.all([
-    enrich("SPECIES_KEY", facets.SPECIES_KEY || [], resolve),
-    enrich("DATASET_KEY", facets.DATASET_KEY || [], resolve),
-    enrich("PUBLISHING_ORG", facets.PUBLISHING_ORG || [], resolve),
+    enrich("SPECIES_KEY", speciesCounts, resolve),
+    enrich("DATASET_KEY", datasetCounts, resolve),
+    enrich("PUBLISHING_ORG", publisherCounts, resolve),
   ]);
+
+  const totals = {
+    species: species.length,
+    datasets: datasets.length,
+    publishers: publishers.length,
+    years: yearCounts.length,
+    basis_of_record: basisCounts.length,
+  };
 
   return {
     geometry: wkt,
-    occurrence_count: payload.count || 0,
+    occurrence_count: countPayload.count || 0,
+    totals,
     species,
     datasets,
     publishers,
-    years: (facets.YEAR || []).map((entry) => ({
+    years: yearCounts.map((entry) => ({
       year: Number(entry.name),
       count: entry.count,
     })),
-    basis_of_record: (facets.BASIS_OF_RECORD || []).map((entry) => ({
+    basis_of_record: basisCounts.map((entry) => ({
       basisOfRecord: entry.name,
       count: entry.count,
     })),
   };
+}
+
+async function fetchAllFacetValues(wkt, facet) {
+  let offset = 0;
+  const all = [];
+
+  while (true) {
+    const payload = await getJson("/occurrence/search", {
+      geometry: wkt,
+      limit: 0,
+      facet: [facet],
+      facetLimit: FACET_PAGE_SIZE,
+      facetOffset: offset,
+    });
+    const batch = payload.facets?.[0]?.counts ?? [];
+    all.push(...batch);
+
+    if (batch.length < FACET_PAGE_SIZE) {
+      return all;
+    }
+
+    offset += FACET_PAGE_SIZE;
+  }
+}
+
+function updateTabLabels(totals) {
+  tabs.forEach((tab) => {
+    const key = tab.dataset.tab;
+    const base = TAB_LABELS[key];
+    const total = totals?.[key];
+
+    tab.textContent =
+      total != null ? `${base} (${formatCount(total)})` : base;
+  });
+}
+
+function resetTabLabels() {
+  tabs.forEach((tab) => {
+    tab.textContent = TAB_LABELS[tab.dataset.tab];
+  });
 }
 
 async function enrich(field, counts, resolve) {
@@ -413,8 +502,10 @@ async function enrich(field, counts, resolve) {
     return counts.map((entry) => ({ key: entry.name, count: entry.count }));
   }
 
-  const names = await Promise.all(
-    counts.map((entry) => resolveName(fieldKey, entry.name)),
+  const names = await mapPool(
+    counts,
+    (entry) => resolveName(fieldKey, entry.name),
+    RESOLVE_CONCURRENCY,
   );
 
   return counts.map((entry, index) => ({
@@ -422,6 +513,24 @@ async function enrich(field, counts, resolve) {
     name: names[index],
     count: entry.count,
   }));
+}
+
+async function mapPool(items, mapper, concurrency) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, worker),
+  );
+  return results;
 }
 
 async function resolveName(kind, key) {
@@ -434,12 +543,6 @@ async function resolveName(kind, key) {
   } catch {
     return key;
   }
-}
-
-function facetMap(payload) {
-  return Object.fromEntries(
-    (payload.facets || []).map((facet) => [facet.field, facet.counts || []]),
-  );
 }
 
 async function getJson(path, params = {}) {
@@ -543,12 +646,19 @@ function renderTable() {
     : rows;
 
   if (!filtered.length) {
+    tablePagination.hidden = true;
     resultsBody.innerHTML =
       '<tr class="placeholder-row"><td colspan="2">No rows match your filter.</td></tr>';
     return;
   }
 
-  resultsBody.innerHTML = filtered
+  const totalPages = Math.max(1, Math.ceil(filtered.length / TABLE_PAGE_SIZE));
+  tablePage = Math.min(tablePage, totalPages - 1);
+  const start = tablePage * TABLE_PAGE_SIZE;
+  const end = Math.min(start + TABLE_PAGE_SIZE, filtered.length);
+  const pageRows = filtered.slice(start, end);
+
+  resultsBody.innerHTML = pageRows
     .map(
       (row) => `
         <tr>
@@ -558,6 +668,13 @@ function renderTable() {
       `,
     )
     .join("");
+
+  tablePagination.hidden = false;
+  tablePrev.disabled = tablePage === 0;
+  tableNext.disabled = tablePage >= totalPages - 1;
+  tablePageInfo.textContent = `${formatCount(start + 1)}–${formatCount(
+    end,
+  )} of ${formatCount(filtered.length)}`;
 }
 
 function rowsForTab(tab) {
@@ -904,9 +1021,11 @@ function formatCount(value) {
   return Number(value).toLocaleString();
 }
 
-function setStatus(message, isError = false) {
-  statusMessage.textContent = message;
+function setStatus(message, isError = false, loading = false) {
+  statusText.textContent = message;
   statusMessage.classList.toggle("error", isError);
+  statusSpinner.hidden = !loading;
+  statusMessage.setAttribute("aria-busy", loading ? "true" : "false");
 }
 
 function escapeHtml(value) {
