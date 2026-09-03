@@ -52,7 +52,20 @@ const tablePageInfo = document.getElementById("tablePageInfo");
 const statusMessage = document.getElementById("statusMessage");
 const statusSpinner = document.getElementById("statusSpinner");
 const statusText = document.getElementById("statusText");
+const queryLoaderText = document.getElementById("queryLoaderText");
 const tabs = document.querySelectorAll(".tab");
+
+const prefersReducedMotion = window.matchMedia(
+  "(prefers-reduced-motion: reduce)",
+);
+
+// Loading phases surfaced in the query button, in pipeline order. Kept
+// short so the longest label fits the loading pill without truncation.
+const QUERY_PHASE_LABELS = {
+  scan: "Scanning area",
+  resolve: "Resolving taxa",
+  wiki: "Gathering context",
+};
 
 let map;
 let drawMode = false;
@@ -547,7 +560,11 @@ async function runQuery() {
   setStatus("Querying GBIF…", false, true);
 
   try {
+    // Inside the try so a throw here still reaches the catch/finally and
+    // cannot strand the button disabled with the pulse loop running.
+    beginQueryAnimation();
     const { wkt, usedBboxFallback } = wktForQuery(currentArea);
+    setQueryPhase("resolve");
     inventory = await searchInventoryCore(wkt);
     occurrenceCount.textContent = formatCount(inventory.occurrence_count);
     updateTabLabels(inventory.totals);
@@ -557,12 +574,15 @@ async function runQuery() {
     renderTable();
     submitBtn.disabled = false;
 
+    endQueryAnimation(true);
+
     setStatus("Loading species names…", false, true);
 
+    setQueryPhase("wiki");
     loadSpeciesInventory(wkt).then(() => {
       exportBtn.disabled = false;
       if (usedBboxFallback) {
-      setGeometryStatus(
+        setGeometryStatus(
           wkt,
           "Results use the bounding box of your GeoJSON. The polygon was too complex for a direct GBIF browser query.",
         );
@@ -572,8 +592,143 @@ async function runQuery() {
     });
   } catch (error) {
     setStatus(formatQueryError(error, currentArea.wkt), true);
+    endQueryAnimation(false);
     submitBtn.disabled = false;
   }
+}
+
+// Query button loading choreography. Back-to-back queries restart the grow:
+// .is-loading is dropped too before the forced reflow, so re-adding it
+// restarts the one-shot forwards animations instead of no-opping on a
+// button still inside endQueryAnimation's cleanup window.
+let queryAnimTimer = null;
+let queryPhaseTimer = null;
+
+function beginQueryAnimation() {
+  clearTimeout(queryAnimTimer);
+  clearTimeout(queryPhaseTimer);
+  submitBtn.setAttribute("aria-busy", "true");
+  submitBtn.classList.remove("is-loading", "is-done", "is-error");
+  void submitBtn.offsetWidth;
+  submitBtn.classList.add("is-loading");
+  queryLoaderText.classList.remove("swap");
+  queryLoaderText.textContent = QUERY_PHASE_LABELS.scan;
+  startAreaPulse();
+}
+
+function endQueryAnimation(succeeded) {
+  submitBtn.removeAttribute("aria-busy");
+  clearTimeout(queryPhaseTimer);
+  stopAreaPulse();
+  if (prefersReducedMotion.matches) {
+    submitBtn.classList.remove("is-loading");
+    return;
+  }
+  submitBtn.classList.add(succeeded ? "is-done" : "is-error");
+  if (succeeded) spawnLeafBurst();
+  queryAnimTimer = setTimeout(() => {
+    submitBtn.classList.remove("is-loading", "is-done", "is-error");
+  }, 650);
+}
+
+function setQueryPhase(phase) {
+  // Tracked and cleared: a pending swap from the previous query would
+  // otherwise overwrite the reset "Scanning area" label.
+  clearTimeout(queryPhaseTimer);
+  const label = QUERY_PHASE_LABELS[phase];
+  if (!label || queryLoaderText.textContent === label) return;
+  queryLoaderText.classList.add("swap");
+  queryPhaseTimer = setTimeout(() => {
+    queryLoaderText.textContent = label;
+    queryLoaderText.classList.remove("swap");
+  }, 180);
+}
+
+// Success flourish: leaves scatter out of the button on an upward arc.
+// Web Animations API keeps the cleanup trivial (remove on finish).
+// Saturated greens only — the burst flies over the light page background,
+// where pale greens would wash out.
+function spawnLeafBurst() {
+  const colors = ["#2f7d4b", "#25633c", "#4ea06f", "#3c9a63", "#1e5233"];
+  for (let i = 0; i < 12; i++) {
+    const leaf = document.createElement("span");
+    leaf.className = "burst-leaf";
+    leaf.innerHTML = `<svg viewBox="0 0 20 20"><path d="M17 2 C 8 3.5, 3.5 8, 2 17 C 11 15.5, 15.5 11, 17 2 Z" fill="${colors[i % colors.length]}"/></svg>`;
+    leaf.style.opacity = "0";
+    submitBtn.appendChild(leaf);
+
+    // Upward fan from the sprout: leaves clear the pill quickly and arc
+    // over the light toolbar, where the saturated greens read best.
+    const theta = (i / 11 - 0.5) * 2.6 + (Math.random() - 0.5) * 0.2;
+    const dist = 64 + Math.random() * 52;
+    const dx = Math.sin(theta) * dist;
+    const dy = -Math.cos(theta) * dist;
+    const spin = (Math.random() * 2 - 1) * 420;
+    const baseTilt = Math.random() * 360;
+    leaf
+      .animate(
+        [
+          {
+            transform: `translate(-50%, -50%) translate(0, 0) rotate(${baseTilt}deg) scale(0.7)`,
+            opacity: 1,
+          },
+          {
+            transform: `translate(-50%, -50%) translate(${dx * 0.55}px, ${dy * 0.75}px) rotate(${baseTilt + spin * 0.5}deg) scale(1.1)`,
+            opacity: 1,
+            offset: 0.75,
+          },
+          {
+            transform: `translate(-50%, -50%) translate(${dx}px, ${dy + 30}px) rotate(${baseTilt + spin}deg) scale(0.9)`,
+            opacity: 0,
+          },
+        ],
+        {
+          duration: 750 + Math.random() * 300,
+          easing: "cubic-bezier(0.1, 0.7, 0.3, 1)",
+          delay: i * 10,
+          fill: "backwards",
+        },
+      )
+      .onfinish = () => leaf.remove();
+  }
+}
+
+// While the query runs, the drawn area breathes on the map — a soft
+// fill/line pulse. The resting paint is snapshotted before the first write
+// and restored after, so it can never drift from initMap's layer style.
+let areaPulseFrame = null;
+let areaPulseRest = null;
+
+function startAreaPulse() {
+  if (prefersReducedMotion.matches || !map?.getLayer("bbox-fill")) return;
+  areaPulseRest = {
+    fillOpacity: map.getPaintProperty("bbox-fill", "fill-opacity"),
+    lineWidth: map.getPaintProperty("bbox-line", "line-width"),
+  };
+  const start = performance.now();
+  const paint = (now) => {
+    if (!map.getLayer("bbox-fill")) return;
+    const wave =
+      0.5 - 0.5 * Math.cos((((now - start) % 1600) / 1600) * Math.PI * 2);
+    map.setPaintProperty("bbox-fill", "fill-opacity", 0.12 + 0.16 * wave);
+    map.setPaintProperty("bbox-line", "line-width", 2 + 1.6 * wave);
+    areaPulseFrame = requestAnimationFrame(paint);
+  };
+  areaPulseFrame = requestAnimationFrame(paint);
+}
+
+function stopAreaPulse() {
+  if (areaPulseFrame) cancelAnimationFrame(areaPulseFrame);
+  areaPulseFrame = null;
+  if (map?.getLayer("bbox-fill") && areaPulseRest) {
+    if (areaPulseRest.fillOpacity != null) {
+      map.setPaintProperty("bbox-fill", "fill-opacity", areaPulseRest.fillOpacity);
+    }
+    if (areaPulseRest.lineWidth != null) {
+      map.setPaintProperty("bbox-line", "line-width", areaPulseRest.lineWidth);
+    }
+  }
+  areaPulseRest = null;
 }
 
 async function searchInventoryCore(wkt) {
