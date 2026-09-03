@@ -432,7 +432,13 @@ function rowsForTab(tab) {
     basis_of_record: ["basisOfRecord"],
   };
 
-  return (inventory[tab] || []).map((item) => ({
+  const items = inventory[tab] || [];
+  const sorted =
+    tab === "years"
+      ? [...items].sort((a, b) => Number(b.year) - Number(a.year))
+      : items;
+
+  return sorted.map((item) => ({
     label: String(
       labelKeys[tab].map((key) => item[key]).find(Boolean) ?? item.key ?? "",
     ),
