@@ -341,7 +341,26 @@
       .footer {
         display: flex;
         justify-content: center;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
         padding: 8px 0 28px;
+      }
+
+      .footer-credit {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .footer-credit a {
+        color: var(--text);
+        font-weight: 600;
+        text-decoration: none;
+      }
+
+      .footer-credit a:hover {
+        color: var(--accent);
       }
 
       .footer .btn {
@@ -456,6 +475,12 @@
     </main>
 
     <footer class="footer">
+      <p class="footer-credit">
+        Developed by
+        <a href="https://conservationmetrics.com/" target="_blank" rel="noopener"
+          >Conservation Metrics, Inc.</a
+        >
+      </p>
       <a
         href="https://github.com/conservationmetrics/gbif-geometry-inventory"
         class="btn"
