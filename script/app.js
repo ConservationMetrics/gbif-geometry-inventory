@@ -190,13 +190,51 @@ function showSpeciesCard(row) {
   }
 
   speciesCard.dataset.key = row.dataset.key;
+  // Wikipedia supplies what it has; GBIF fills the gaps (photo for species
+  // without a thumbnail, classification, taxon and Wikidata links).
+  const gbifKey = row.dataset.key;
+  const cardLink = (href, label) =>
+    `<a class="card-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label} <span aria-hidden="true">↗</span></a>`;
+  const links = [
+    data.w ? cardLink(data.w, "Wikipedia") : "",
+    data.q ? cardLink(data.q, "Wikidata") : "",
+    gbifKey
+      ? cardLink(
+          `https://www.gbif.org/taxon/${encodeURIComponent(gbifKey)}`,
+          "GBIF",
+        )
+      : "",
+  ]
+    .filter(Boolean)
+    .join("");
+  const childTaxa = data.k
+    ? `<span class="card-children">· ${escapeHtml(String(data.k))} child taxa</span>`
+    : "";
+
   speciesCard.innerHTML = `
-    ${data.t ? `<div class="card-img"><img src="${escapeHtml(data.t)}" alt="" referrerpolicy="no-referrer" /></div>` : ""}
+    ${data.t || gbifKey ? `<div class="card-img" data-photo>${data.t ? `<img src="${escapeHtml(data.t)}" alt="" referrerpolicy="no-referrer" />` : ""}</div>` : ""}
     <div class="card-name">${escapeHtml(String(data.n ?? ""))}</div>
     ${data.d ? `<p class="card-desc">${escapeHtml(data.d)}</p>` : ""}
-    ${data.w ? `<a class="card-link" href="${escapeHtml(data.w)}" target="_blank" rel="noopener noreferrer">Wikipedia ↗</a>` : ""}
+    ${data.c ? `<p class="card-class">${escapeHtml(data.c)} ${childTaxa}</p>` : childTaxa ? `<p class="card-class">${childTaxa}</p>` : ""}
+    ${links ? `<div class="card-links">${links}</div>` : ""}
   `;
   speciesCard.classList.add("visible");
+
+  if (!data.t && gbifKey) {
+    loadGbifPhoto(gbifKey).then((url) => {
+      if (speciesCard.dataset.key !== row.dataset.key) return;
+      const box = speciesCard.querySelector("[data-photo]");
+      if (!box) return;
+      if (!url) {
+        // No usable photo: drop the reserved box instead of showing an
+        // empty placeholder.
+        box.remove();
+        return;
+      }
+      if (!speciesCard.classList.contains("visible")) return;
+      box.innerHTML = `<img src="${escapeHtml(url)}" alt="" referrerpolicy="no-referrer" />`;
+    });
+  }
 
   const pad = 12;
   const rowRect = row.getBoundingClientRect();
@@ -711,7 +749,12 @@ async function enrich(field, counts, resolve) {
     name: names[index].name,
     canonical: names[index].canonical,
     kingdom: names[index].kingdom,
+    phylum: names[index].phylum,
     taxonClass: names[index].taxonClass,
+    order: names[index].order,
+    family: names[index].family,
+    genus: names[index].genus,
+    childTaxa: names[index].childTaxa,
     count: entry.count,
   }));
 }
@@ -734,20 +777,43 @@ async function mapPool(items, mapper, concurrency) {
   return results;
 }
 
+const EMPTY_NAME = {
+  name: null,
+  canonical: null,
+  kingdom: null,
+  phylum: null,
+  taxonClass: null,
+  order: null,
+  family: null,
+  genus: null,
+  childTaxa: null,
+};
+
 async function resolveName(kind, key) {
   const route = RESOLVE_ROUTES[kind]?.(key);
-  if (!route) return { name: key, canonical: null, kingdom: null, taxonClass: null };
+  if (!route) return { ...EMPTY_NAME, name: key };
 
   try {
     const data = await getJson(route);
+    const isSpecies = kind === "speciesKey";
     return {
+      ...EMPTY_NAME,
       name: data.scientificName || data.title || key,
-      canonical: kind === "speciesKey" ? data.canonicalName || null : null,
-      kingdom: kind === "speciesKey" ? data.kingdom || null : null,
-      taxonClass: kind === "speciesKey" ? data.class || null : null,
+      canonical: isSpecies ? data.canonicalName || null : null,
+      kingdom: isSpecies ? data.kingdom || null : null,
+      phylum: isSpecies ? data.phylum || null : null,
+      taxonClass: isSpecies ? data.class || null : null,
+      order: isSpecies ? data.order || null : null,
+      family: isSpecies ? data.family || null : null,
+      genus: isSpecies ? data.genus || null : null,
+      childTaxa: isSpecies
+        ? Number.isFinite(data.numDescendants) && data.numDescendants > 0
+          ? data.numDescendants
+          : null
+        : null,
     };
   } catch {
-    return { name: key, canonical: null, kingdom: null, taxonClass: null };
+    return { ...EMPTY_NAME, name: key };
   }
 }
 
@@ -758,14 +824,19 @@ async function enrichSpeciesWithWikipedia(
   species,
   deadline = Date.now() + WIKIMEDIA_TIMEOUT_MS,
 ) {
-  const enriched = species.map((item) => ({ ...item, wikipediaUrl: null }));
+  const enriched = species.map((item) => ({
+    ...item,
+    wikipediaUrl: null,
+    wikidataUrl: null,
+  }));
   if (!enriched.length) return enriched;
 
   try {
-    const urlsByGbifId = await wikipediaUrlsByGbifId(enriched, deadline);
+    const matchesByGbifId = await wikipediaMatchesByGbifId(enriched, deadline);
     for (const item of enriched) {
-      const url = urlsByGbifId.get(String(item.key));
-      if (url) item.wikipediaUrl = url;
+      const match = matchesByGbifId.get(String(item.key));
+      if (match?.article) item.wikipediaUrl = match.article;
+      if (match?.wikidata) item.wikidataUrl = match.wikidata;
     }
   } catch {
     // Keep GBIF results as-is.
@@ -804,27 +875,32 @@ async function enrichSpeciesWithWikipedia(
   return enriched;
 }
 
-// GBIF taxon ID -> Wikidata item -> English Wikipedia sitelink, batched
-// into a single SPARQL request. When an ID matches both the legacy P846 and
-// the newer P14607 statement, the P14607 binding wins deterministically.
-async function wikipediaUrlsByGbifId(species, deadline) {
-  const urls = new Map();
+// GBIF taxon ID -> Wikidata item (+ optional English Wikipedia sitelink),
+// batched into a single SPARQL request. The sitelink is OPTIONAL so a taxon
+// with no English article still yields its Wikidata item for the card. When
+// an ID matches both the legacy P846 and the newer P14607 statement, the
+// P14607 binding wins deterministically; fields missing from the winner are
+// still filled from the loser.
+async function wikipediaMatchesByGbifId(species, deadline) {
+  const matches = new Map();
   const ids = [
     ...new Set(species.map((item) => String(item.key)).filter(isSafeTaxonId)),
   ];
-  if (!ids.length) return urls;
+  if (!ids.length) return matches;
   const remaining = deadline - Date.now();
-  if (remaining <= 0) return urls;
+  if (remaining <= 0) return matches;
 
   const values = ids.map((id) => `"${id}"`).join(" ");
   // The matched property is selected as a variable (VALUES on ?prop) instead
   // of BIND inside a UNION branch: Blazegraph hangs on the latter form.
-  const query = `SELECT ?gbif ?article ?prop WHERE {
+  const query = `SELECT ?gbif ?article ?prop ?taxon WHERE {
   VALUES ?gbif { ${values} }
   ?taxon ?prop ?gbif.
   VALUES ?prop { wdt:P14607 wdt:P846 }
-  ?article schema:about ?taxon;
-    schema:isPartOf <https://en.wikipedia.org/>.
+  OPTIONAL {
+    ?article schema:about ?taxon;
+      schema:isPartOf <https://en.wikipedia.org/>.
+  }
 }`;
   const params = new URLSearchParams({ query, format: "json" });
   const data = await fetchJsonWithTimeout(
@@ -833,21 +909,30 @@ async function wikipediaUrlsByGbifId(species, deadline) {
     { headers: { Accept: "application/sparql-results+json" } },
   );
 
+  const merge = (a, b) => ({
+    article: a?.article ?? b?.article ?? null,
+    wikidata: a?.wikidata ?? b?.wikidata ?? null,
+  });
   const legacy = new Map();
+  const collect = (map, id, entry) => map.set(id, merge(map.get(id), entry));
+
   for (const binding of data?.results?.bindings || []) {
     const id = binding.gbif?.value;
-    const url = wikipediaArticleUrl(binding.article?.value);
-    if (!isSafeTaxonId(id) || !url) continue;
+    if (!isSafeTaxonId(id)) continue;
+    const entry = {
+      article: wikipediaArticleUrl(binding.article?.value),
+      wikidata: wikidataEntityUrl(binding.taxon?.value),
+    };
     if (binding.prop?.value.endsWith("/P14607")) {
-      if (!urls.has(id)) urls.set(id, url);
-    } else if (!urls.has(id) && !legacy.has(id)) {
-      legacy.set(id, url);
+      collect(matches, id, entry);
+    } else {
+      collect(legacy, id, entry);
     }
   }
-  for (const [id, url] of legacy) {
-    if (!urls.has(id)) urls.set(id, url);
+  for (const [id, entry] of legacy) {
+    collect(matches, id, entry);
   }
-  return urls;
+  return matches;
 }
 
 // Scientific-name fallback: batched Wikipedia API lookup that follows
@@ -991,6 +1076,71 @@ function wikimediaImageUrl(url) {
     return null;
   }
   return parsed.toString();
+}
+
+// Wikidata entity URIs arrive as http://www.wikidata.org/entity/Q123 (the
+// canonical entity namespace is http); only well-formed Q-ids become
+// canonical https /wiki/ links.
+function wikidataEntityUrl(url) {
+  if (typeof url !== "string") return null;
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  if (
+    (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+    parsed.host !== "www.wikidata.org"
+  ) {
+    return null;
+  }
+  const id = parsed.pathname.split("/").filter(Boolean).pop();
+  return /^Q[1-9][0-9]*$/.test(id)
+    ? `https://www.wikidata.org/wiki/${id}`
+    : null;
+}
+
+// GBIF species media live on many hosts (static.gbif.org, Flickr,
+// iNaturalist), so only the HTTPS requirement is enforced here.
+function gbifImageUrl(url) {
+  if (typeof url !== "string") return null;
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  return parsed.protocol === "https:" ? parsed.toString() : null;
+}
+
+// Occurrence photo for species without a Wikipedia thumbnail, fetched the
+// first time its card opens and cached. Never blocks the card: the reserved
+// image box just stays empty when this fails.
+const gbifPhotoCache = new Map();
+
+function loadGbifPhoto(key) {
+  if (gbifPhotoCache.has(key)) return gbifPhotoCache.get(key);
+  const request = (async () => {
+    try {
+      const data = await fetchJsonWithTimeout(
+        `${API}/species/${encodeURIComponent(key)}/media?limit=10`,
+        6000,
+      );
+      const hit = (data?.results || []).find(
+        (item) => item?.type === "StillImage" && gbifImageUrl(item.identifier),
+      );
+      return hit ? gbifImageUrl(hit.identifier) : null;
+    } catch {
+      return null;
+    }
+  })();
+  gbifPhotoCache.set(key, request);
+  return request;
 }
 
 async function fetchJsonWithTimeout(url, timeoutMs, options = {}) {
@@ -1225,7 +1375,14 @@ function renderTable() {
         : escapeHtml(row.label);
       const attrs = [];
       if (row.key) attrs.push(`data-key="${escapeHtml(row.key)}"`);
-      if (row.thumbnail || row.description) {
+      if (
+        row.key ||
+        row.thumbnail ||
+        row.description ||
+        row.classification ||
+        row.wikipediaUrl ||
+        row.wikidataUrl
+      ) {
         attrs.push(
           `data-summary="${escapeHtml(
             JSON.stringify({
@@ -1233,6 +1390,9 @@ function renderTable() {
               t: row.thumbnail || "",
               d: row.description || "",
               w: row.wikipediaUrl || "",
+              c: row.classification || "",
+              q: row.wikidataUrl || "",
+              k: row.childTaxa || 0,
             }),
           )}"`,
         );
@@ -1350,8 +1510,21 @@ function speciesRow(item) {
     key: String(item.key),
   };
   if (item.wikipediaUrl) row.wikipediaUrl = item.wikipediaUrl;
+  if (item.wikidataUrl) row.wikidataUrl = item.wikidataUrl;
   if (item.thumbnail) row.thumbnail = item.thumbnail;
   if (item.description) row.description = item.description;
+  const lineage = [
+    item.kingdom,
+    item.phylum,
+    item.taxonClass,
+    item.order,
+    item.family,
+    item.genus,
+  ]
+    .filter(Boolean)
+    .filter((rank, index, all) => rank !== all[index - 1]);
+  if (lineage.length > 1) row.classification = lineage.join(" > ");
+  if (item.childTaxa) row.childTaxa = item.childTaxa;
   return row;
 }
 

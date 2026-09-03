@@ -29,10 +29,17 @@ and Animalia further splits into class subgroups such as Aves or Mammalia.
 Group headers only appear when the current filter leaves a species in that
 group.
 
-Species with a Wikipedia thumbnail or short description carry a card: on
-pointer devices it shows on hover, on touch devices on tap. The card
-displays the article thumbnail and its short description, plus a link to the
-article. A species whose article has neither image nor description keeps
-its inline link but no card. Thumbnails and descriptions come from one extra
-batched Wikipedia request and are skipped entirely when Wikipedia is
-unavailable. The XLSX Species sheet includes `Kingdom` and `Class` columns.
+Every species row carries a card: on pointer devices it shows on hover, on
+touch devices on tap. The card follows one pattern, filled by Wikipedia
+first with GBIF covering what Wikipedia lacks: the image slot uses the
+Wikipedia thumbnail when present, otherwise an occurrence photo from the
+GBIF species media API fetched the first time that card opens; below sit the
+name, the Wikipedia short description when available, the classification
+line (kingdom > phylum > class > order > family > genus, plus a child-taxon
+count, all from the same GBIF species lookup the table already uses), and
+links to the Wikipedia article, the Wikidata item, and the GBIF taxon page
+(`gbif.org/taxon/{key}`, one per species). A taxon with no English article
+can still match a Wikidata item, which the Wikidata resolution keeps even
+without a sitelink. All enrichment stays best-effort: any failure simply
+leaves that card slot empty. The XLSX Species sheet includes `Kingdom` and
+`Class` columns.
