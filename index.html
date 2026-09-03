@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GBIF Map Search</title>
+    <!-- GBIF leaf favicon, rotated 20° and hue-shifted so it's not identical to gbif.org's -->
+    <link rel="icon" type="image/png" sizes="64x64" href="favicon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
     <link
       href="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.css"
       rel="stylesheet"
@@ -477,8 +480,21 @@
         line-height: 1.4;
       }
 
-      .species-card .card-link {
-        display: inline-block;
+      .species-card .card-class {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 0.78rem;
+        line-height: 1.35;
+      }
+
+      .species-card .card-children {
+        white-space: nowrap;
+      }
+
+      .species-card .card-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
         margin-top: 8px;
       }
 
