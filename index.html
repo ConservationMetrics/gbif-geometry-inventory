@@ -52,7 +52,8 @@
       }
 
       .header,
-      .layout {
+      .layout,
+      .footer {
         width: min(1200px, calc(100% - 32px));
         margin-inline: auto;
       }
@@ -204,6 +205,14 @@
 
       .summary {
         display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .summary-main {
+        display: flex;
         align-items: baseline;
         gap: 10px;
       }
@@ -329,6 +338,21 @@
         color: var(--danger);
       }
 
+      .footer {
+        display: flex;
+        justify-content: center;
+        padding: 8px 0 28px;
+      }
+
+      .footer .btn {
+        background-color: #616161;
+        color: #fff;
+      }
+
+      .footer .btn:hover {
+        background-color: #424242;
+      }
+
       @media (max-width: 860px) {
         .toolbar-right {
           width: 100%;
@@ -383,8 +407,13 @@
       <section class="results-panel card">
         <div class="results-header">
           <div class="summary">
-            <span class="summary-label">Occurrences</span>
-            <span class="summary-value" id="occurrenceCount">—</span>
+            <div class="summary-main">
+              <span class="summary-label">Occurrences</span>
+              <span class="summary-value" id="occurrenceCount">—</span>
+            </div>
+            <button type="button" class="btn btn-secondary" id="exportBtn" disabled>
+              <i class="fa-solid fa-file-export"></i> Export XLS
+            </button>
           </div>
           <div class="results-controls">
             <div class="tabs" role="tablist" aria-label="Result categories">
@@ -426,6 +455,18 @@
       </section>
     </main>
 
+    <footer class="footer">
+      <a
+        href="https://github.com/conservationmetrics/gbif-geometry-inventory"
+        class="btn"
+        target="_blank"
+        rel="noopener"
+      >
+        <i class="fa-brands fa-github"></i> GitHub
+      </a>
+    </footer>
+
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.js"></script>
     <script src="script/app.js"></script>
   </body>

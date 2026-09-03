@@ -24,6 +24,7 @@ const dropOverlay = document.getElementById("dropOverlay");
 const mapWrap = document.querySelector(".map-wrap");
 const occurrenceCount = document.getElementById("occurrenceCount");
 const tableSearch = document.getElementById("tableSearch");
+const exportBtn = document.getElementById("exportBtn");
 const resultsBody = document.getElementById("resultsBody");
 const statusMessage = document.getElementById("statusMessage");
 const tabs = document.querySelectorAll(".tab");
@@ -50,6 +51,7 @@ drawBtn.addEventListener("click", toggleDrawMode);
 clearBtn.addEventListener("click", clearArea);
 submitBtn.addEventListener("click", runQuery);
 geojsonInput.addEventListener("change", onGeoJSONSelected);
+exportBtn.addEventListener("click", exportToXls);
 bindDropHandlers();
 
 initMap();
@@ -176,6 +178,7 @@ function clearArea() {
   submitBtn.disabled = true;
   tableSearch.disabled = true;
   tableSearch.value = "";
+  exportBtn.disabled = true;
   geojsonInput.value = "";
   occurrenceCount.textContent = "—";
   resultsBody.innerHTML =
@@ -215,6 +218,7 @@ async function runQuery() {
     inventory = await searchInventory(wkt, 50, true);
     occurrenceCount.textContent = formatCount(inventory.occurrence_count);
     tableSearch.disabled = false;
+    exportBtn.disabled = false;
     renderTable();
 
     if (usedBboxFallback) {
@@ -432,18 +436,75 @@ function rowsForTab(tab) {
     basis_of_record: ["basisOfRecord"],
   };
 
-  const items = inventory[tab] || [];
-  const sorted =
-    tab === "years"
-      ? [...items].sort((a, b) => Number(b.year) - Number(a.year))
-      : items;
-
-  return sorted.map((item) => ({
+  return itemsForTab(tab).map((item) => ({
     label: String(
       labelKeys[tab].map((key) => item[key]).find(Boolean) ?? item.key ?? "",
     ),
     count: item.count,
   }));
+}
+
+function itemsForTab(tab) {
+  const items = inventory?.[tab] || [];
+  if (tab === "years") {
+    return [...items].sort((a, b) => Number(b.year) - Number(a.year));
+  }
+  return items;
+}
+
+const EXPORT_SHEETS = [
+  {
+    tab: "species",
+    name: "Species",
+    headers: ["Name", "Key", "Count"],
+    rows: (items) =>
+      items.map((item) => [item.name || item.key, item.key, item.count]),
+  },
+  {
+    tab: "datasets",
+    name: "Datasets",
+    headers: ["Name", "Key", "Count"],
+    rows: (items) =>
+      items.map((item) => [item.name || item.key, item.key, item.count]),
+  },
+  {
+    tab: "publishers",
+    name: "Publishers",
+    headers: ["Name", "Key", "Count"],
+    rows: (items) =>
+      items.map((item) => [item.name || item.key, item.key, item.count]),
+  },
+  {
+    tab: "years",
+    name: "Years",
+    headers: ["Year", "Count"],
+    rows: (items) => items.map((item) => [item.year, item.count]),
+  },
+  {
+    tab: "basis_of_record",
+    name: "Basis of record",
+    headers: ["Basis of record", "Count"],
+    rows: (items) => items.map((item) => [item.basisOfRecord, item.count]),
+  },
+];
+
+function exportToXls() {
+  if (!inventory || typeof XLSX === "undefined") return;
+
+  const workbook = XLSX.utils.book_new();
+
+  for (const sheet of EXPORT_SHEETS) {
+    const items = itemsForTab(sheet.tab);
+    const data = [sheet.headers, ...sheet.rows(items)];
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet(data),
+      sheet.name,
+    );
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(workbook, `gbif-geometry-inventory-${date}.xlsx`);
 }
 
 function bboxToWkt(bounds) {
