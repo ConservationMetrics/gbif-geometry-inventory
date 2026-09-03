@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GBIF Geometry Inventory</title>
+    <link
+      href="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.css"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #eef1ec;
+        --surface: #ffffff;
+        --text: #1f2a24;
+        --muted: #5f6f66;
+        --line: #d8e0da;
+        --accent: #2f7d4b;
+        --accent-dark: #25633c;
+        --accent-soft: #e6f2ea;
+        --danger: #b42318;
+        --shadow: 0 10px 30px rgba(31, 42, 36, 0.08);
+        --radius: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "DM Sans", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(47, 125, 75, 0.08), transparent 28%),
+          var(--bg);
+        color: var(--text);
+      }
+
+      a {
+        color: var(--accent);
+      }
+
+      .header,
+      .layout {
+        width: min(1200px, calc(100% - 32px));
+        margin-inline: auto;
+      }
+
+      .header {
+        padding: 28px 0 18px;
+      }
+
+      .header h1 {
+        margin: 0 0 8px;
+        font-size: clamp(1.6rem, 2vw, 2rem);
+      }
+
+      .header p {
+        margin: 0;
+        max-width: 62ch;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+
+      .layout {
+        display: grid;
+        gap: 18px;
+        padding-bottom: 24px;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .map-wrap {
+        position: relative;
+      }
+
+      #map {
+        width: 100%;
+        height: min(52vh, 520px);
+        min-height: 320px;
+      }
+
+      .drop-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(47, 125, 75, 0.12);
+        border: 2px dashed var(--accent);
+        color: var(--accent-dark);
+        font-weight: 600;
+        text-align: center;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+        z-index: 2;
+      }
+
+      .drop-overlay.visible {
+        opacity: 1;
+      }
+
+      .drop-overlay i {
+        margin-right: 8px;
+      }
+
+      .map-toolbar {
+        display: flex;
+        gap: 12px;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        padding: 14px 16px;
+        border-top: 1px solid var(--line);
+        background: #fafcfa;
+      }
+
+      .toolbar-left,
+      .toolbar-right {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .hint {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: none;
+        border-radius: 999px;
+        padding: 10px 16px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+      }
+
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .btn:not(:disabled):hover {
+        transform: translateY(-1px);
+      }
+
+      .btn-primary {
+        color: #fff;
+        background: var(--accent);
+      }
+
+      .btn-primary:not(:disabled):hover {
+        background: var(--accent-dark);
+      }
+
+      .btn-secondary {
+        color: var(--accent-dark);
+        background: var(--accent-soft);
+      }
+
+      label.btn {
+        cursor: pointer;
+      }
+
+      .btn-secondary.active {
+        box-shadow: inset 0 0 0 2px var(--accent);
+      }
+
+      .btn-ghost {
+        color: var(--muted);
+        background: transparent;
+      }
+
+      .results-header {
+        display: grid;
+        gap: 16px;
+        padding: 18px 18px 0;
+      }
+
+      .summary {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .summary-label {
+        font-size: 0.92rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .summary-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .results-controls {
+        display: flex;
+        gap: 12px;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .tab {
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 8px 14px;
+        font: inherit;
+        font-size: 0.92rem;
+        cursor: pointer;
+      }
+
+      .tab.active {
+        color: var(--accent-dark);
+        border-color: #b8d6c3;
+        background: var(--accent-soft);
+        font-weight: 600;
+      }
+
+      .search-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: min(280px, 100%);
+        padding: 10px 14px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fafcfa;
+        color: var(--muted);
+      }
+
+      .search-wrap input {
+        flex: 1;
+        border: none;
+        outline: none;
+        font: inherit;
+        background: transparent;
+      }
+
+      .table-wrap {
+        padding: 14px 18px 18px;
+        overflow: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        padding: 12px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+      }
+
+      th {
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+
+      .col-count {
+        width: 120px;
+        text-align: right;
+      }
+
+      td.col-count {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+      }
+
+      tbody tr:hover {
+        background: #f7fbf8;
+      }
+
+      .placeholder-row td {
+        color: var(--muted);
+        font-style: italic;
+      }
+
+      .status {
+        min-height: 1.2rem;
+        margin: 0;
+        padding: 0 18px 16px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .status.error {
+        color: var(--danger);
+      }
+
+      @media (max-width: 860px) {
+        .toolbar-right {
+          width: 100%;
+          justify-content: space-between;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-copy">
+        <h1>GBIF Geometry Inventory</h1>
+        <p>
+          Draw a bounding box or drop a GeoJSON file on the map to summarize
+          <a href="https://www.gbif.org/" target="_blank" rel="noopener">GBIF</a>
+          occurrence records in that area — species, datasets, publishers, years,
+          and record types. Everything runs in your browser.
+        </p>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="map-panel card">
+        <div class="map-wrap">
+          <div id="map" aria-label="Map for drawing a query area"></div>
+          <div class="drop-overlay" id="dropOverlay" aria-hidden="true">
+            <span><i class="fa-solid fa-file-arrow-down"></i>Drop GeoJSON to set query area</span>
+          </div>
+        </div>
+        <div class="map-toolbar">
+          <div class="toolbar-left">
+            <button type="button" class="btn btn-secondary" id="drawBtn">
+              <i class="fa-regular fa-square"></i> Draw area
+            </button>
+            <label class="btn btn-secondary" for="geojsonInput">
+              <i class="fa-solid fa-file-arrow-up"></i> Upload GeoJSON
+            </label>
+            <input id="geojsonInput" type="file" accept=".geojson,.json,application/geo+json,application/json" hidden />
+            <button type="button" class="btn btn-ghost" id="clearBtn" disabled>
+              Clear
+            </button>
+          </div>
+          <div class="toolbar-right">
+            <span class="hint" id="drawHint">Draw a box or drop GeoJSON on the map.</span>
+            <button type="button" class="btn btn-primary" id="submitBtn" disabled>
+              <i class="fa-solid fa-magnifying-glass"></i> Query GBIF
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="results-panel card">
+        <div class="results-header">
+          <div class="summary">
+            <span class="summary-label">Occurrences</span>
+            <span class="summary-value" id="occurrenceCount">—</span>
+          </div>
+          <div class="results-controls">
+            <div class="tabs" role="tablist" aria-label="Result categories">
+              <button type="button" class="tab active" data-tab="species">Species</button>
+              <button type="button" class="tab" data-tab="datasets">Datasets</button>
+              <button type="button" class="tab" data-tab="publishers">Publishers</button>
+              <button type="button" class="tab" data-tab="years">Years</button>
+              <button type="button" class="tab" data-tab="basis_of_record">Basis of record</button>
+            </div>
+            <div class="search-wrap">
+              <i class="fa-solid fa-filter"></i>
+              <input
+                id="tableSearch"
+                type="search"
+                placeholder="Filter rows…"
+                disabled
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table id="resultsTable">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col" class="col-count">Count</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr class="placeholder-row">
+                <td colspan="2">Draw an area or drop GeoJSON, then query GBIF.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="status" id="statusMessage" aria-live="polite"></p>
+      </section>
+    </main>
+
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.js"></script>
+    <script src="script/app.js"></script>
+  </body>
+</html>
