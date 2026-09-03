@@ -294,6 +294,18 @@
         font-weight: 600;
       }
 
+      .tab-spinner {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border: 2px solid var(--line);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: status-spin 0.7s linear infinite;
+        vertical-align: -2px;
+        margin-left: 4px;
+      }
+
       .search-wrap {
         display: flex;
         align-items: center;
@@ -514,10 +526,10 @@
           </div>
           <div class="results-controls">
             <div class="tabs" role="tablist" aria-label="Result categories">
-              <button type="button" class="tab active" data-tab="species">Species</button>
-              <button type="button" class="tab" data-tab="datasets">Datasets</button>
+              <button type="button" class="tab active" data-tab="datasets">Datasets</button>
               <button type="button" class="tab" data-tab="publishers">Publishers</button>
               <button type="button" class="tab" data-tab="years">Years</button>
+              <button type="button" class="tab" data-tab="species">Species</button>
               <button type="button" class="tab" data-tab="basis_of_record">Basis of record</button>
             </div>
             <div class="search-wrap">

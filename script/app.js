@@ -53,16 +53,14 @@ let drawMode = false;
 let dragStart = null;
 let currentArea = null;
 let inventory = null;
-let activeTab = "species";
+let activeTab = "datasets";
 let tablePage = 0;
 let dragDepth = 0;
+let speciesLoading = false;
 
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
-    activeTab = tab.dataset.tab;
-    tablePage = 0;
-    tabs.forEach((button) => button.classList.toggle("active", button === tab));
-    tableSearch.value = "";
+    setActiveTab(tab.dataset.tab);
     renderTable();
   });
 });
@@ -328,6 +326,7 @@ function clearArea() {
   exitDrawMode();
   currentArea = null;
   inventory = null;
+  speciesLoading = false;
   updateAreaFeature(null);
   clearBtn.disabled = true;
   submitBtn.disabled = true;
@@ -338,6 +337,7 @@ function clearArea() {
   tablePage = 0;
   tablePagination.hidden = true;
   occurrenceCount.textContent = "—";
+  setActiveTab("datasets");
   resetTabLabels();
   resultsBody.innerHTML =
     '<tr class="placeholder-row"><td colspan="2">Draw an area or drop GeoJSON, then query GBIF.</td></tr>';
@@ -369,75 +369,72 @@ async function runQuery() {
 
   submitBtn.disabled = true;
   tableSearch.disabled = true;
+  exportBtn.disabled = true;
   setStatus("Querying GBIF…");
 
   try {
     const { wkt, usedBboxFallback } = wktForQuery(currentArea);
-    inventory = await searchInventory(wkt, true);
+    inventory = await searchInventoryCore(wkt);
     occurrenceCount.textContent = formatCount(inventory.occurrence_count);
     updateTabLabels(inventory.totals);
+    setActiveTab("datasets");
     tableSearch.disabled = false;
-    exportBtn.disabled = false;
     renderTable();
+    submitBtn.disabled = false;
 
-    if (usedBboxFallback) {
-      setStatus(
-        "Results use the bounding box of your GeoJSON. The polygon was too complex for a direct GBIF browser query.",
-      );
-      return;
-    }
-
-    setStatus(`Geometry: ${inventory.geometry}`);
+    loadSpeciesInventory(wkt).then(() => {
+      exportBtn.disabled = false;
+      if (usedBboxFallback) {
+        setStatus(
+          "Results use the bounding box of your GeoJSON. The polygon was too complex for a direct GBIF browser query.",
+        );
+        return;
+      }
+      setStatus(`Geometry: ${inventory.geometry}`);
+    });
   } catch (error) {
     setStatus(formatQueryError(error, currentArea.wkt), true);
-  } finally {
     submitBtn.disabled = false;
   }
 }
 
-async function searchInventory(wkt, resolve) {
-  setStatus("Fetching all results from GBIF…");
-
+async function searchInventoryCore(wkt) {
   const countPayload = await getJson("/occurrence/search", {
     geometry: wkt,
     limit: 0,
   });
 
-  const [
-    speciesCounts,
-    datasetCounts,
-    publisherCounts,
-    yearCounts,
-    basisCounts,
-  ] = await Promise.all([
-    fetchAllFacetValues(wkt, "speciesKey"),
-    fetchAllFacetValues(wkt, "datasetKey"),
-    fetchAllFacetValues(wkt, "publishingOrg"),
-    fetchAllFacetValues(wkt, "year"),
-    fetchAllFacetValues(wkt, "basisOfRecord"),
-  ]);
+  setStatus("Fetching results from GBIF…");
 
-  setStatus("Resolving names…", false, true);
+  const [datasetCounts, publisherCounts, yearCounts, basisCounts] =
+    await Promise.all([
+      fetchAllFacetValues(wkt, "datasetKey"),
+      fetchAllFacetValues(wkt, "publishingOrg"),
+      fetchAllFacetValues(wkt, "year"),
+      fetchAllFacetValues(wkt, "basisOfRecord"),
+    ]);
 
-  const [species, datasets, publishers] = await Promise.all([
-    enrich("SPECIES_KEY", speciesCounts, resolve),
-    enrich("DATASET_KEY", datasetCounts, resolve),
-    enrich("PUBLISHING_ORG", publisherCounts, resolve),
+  setStatus("Resolving names…");
+
+  const [datasets, publishers] = await Promise.all([
+    enrich("DATASET_KEY", datasetCounts, true),
+    enrich("PUBLISHING_ORG", publisherCounts, true),
   ]);
 
   const totals = {
-    species: species.length,
     datasets: datasets.length,
     publishers: publishers.length,
     years: yearCounts.length,
     basis_of_record: basisCounts.length,
+    species: null,
   };
 
   return {
     geometry: wkt,
     occurrence_count: countPayload.count || 0,
     totals,
-    species,
+    species: [],
+    speciesError: null,
     datasets,
     publishers,
     years: yearCounts.map((entry) => ({
@@ -449,6 +446,26 @@ async function searchInventory(wkt, resolve) {
       count: entry.count,
     })),
   };
+}
+
+async function loadSpeciesInventory(wkt) {
+  speciesLoading = true;
+  updateSpeciesTabLabel();
+
+  try {
+    const speciesCounts = await fetchAllFacetValues(wkt, "speciesKey");
+    inventory.totals.species = speciesCounts.length;
+    updateTabLabels(inventory.totals);
+    inventory.species = await enrich("SPECIES_KEY", speciesCounts, true);
+  } catch (error) {
+    inventory.speciesError = formatQueryError(error, wkt);
+  } finally {
+    speciesLoading = false;
+    updateSpeciesTabLabel();
+    if (activeTab === "species") {
+      renderTable();
+    }
+  }
 }
 
 async function fetchAllFacetValues(wkt, facet) {
@@ -474,20 +491,53 @@ async function fetchAllFacetValues(wkt, facet) {
   }
 }
 
+function setActiveTab(tabKey) {
+  activeTab = tabKey;
+  tablePage = 0;
+  tabs.forEach((button) =>
+    button.classList.toggle("active", button.dataset.tab === tabKey),
+  );
+  tableSearch.value = "";
+}
+
 function updateTabLabels(totals) {
   tabs.forEach((tab) => {
     const key = tab.dataset.tab;
+    if (key === "species") {
+      updateSpeciesTabLabel(totals);
+      return;
+    }
+
     const base = TAB_LABELS[key];
     const total = totals?.[key];
-
     tab.textContent =
       total != null ? `${base} (${formatCount(total)})` : base;
   });
 }
 
+function updateSpeciesTabLabel(totals = inventory?.totals) {
+  const tab = document.querySelector('.tab[data-tab="species"]');
+  if (!tab) return;
+
+  const base = TAB_LABELS.species;
+  const total = totals?.species;
+  const label = total != null ? `${base} (${formatCount(total)})` : base;
+
+  if (speciesLoading) {
+    tab.innerHTML = `${escapeHtml(label)} <span class="tab-spinner" aria-hidden="true"></span>`;
+    tab.setAttribute("aria-busy", "true");
+    return;
+  }
+
+  tab.textContent = label;
+  tab.removeAttribute("aria-busy");
+}
+
 function resetTabLabels() {
+  speciesLoading = false;
   tabs.forEach((tab) => {
     tab.textContent = TAB_LABELS[tab.dataset.tab];
+    tab.removeAttribute("aria-busy");
   });
 }
 
@@ -639,6 +689,21 @@ function formatQueryError(error, geometry = "") {
 function renderTable() {
   if (!inventory) return;
 
+  if (activeTab === "species") {
+    if (speciesLoading) {
+      tablePagination.hidden = true;
+      resultsBody.innerHTML =
+        '<tr class="placeholder-row"><td colspan="2">Loading species names…</td></tr>';
+      return;
+    }
+
+    if (inventory.speciesError) {
+      tablePagination.hidden = true;
+      resultsBody.innerHTML = `<tr class="placeholder-row"><td colspan="2">${escapeHtml(inventory.speciesError)}</td></tr>`;
+      return;
+    }
+  }
+
   const rows = rowsForTab(activeTab);
   const filter = tableSearch.value.trim().toLowerCase();
   const filtered = filter
@@ -704,13 +769,6 @@ function itemsForTab(tab) {
 
 const EXPORT_SHEETS = [
   {
-    tab: "species",
-    name: "Species",
-    headers: ["Name", "Key", "Count"],
-    rows: (items) =>
-      items.map((item) => [item.name || item.key, item.key, item.count]),
-  },
-  {
     tab: "datasets",
     name: "Datasets",
     headers: ["Name", "Key", "Count"],
@@ -729,6 +787,13 @@ const EXPORT_SHEETS = [
     name: "Years",
     headers: ["Year", "Count"],
     rows: (items) => items.map((item) => [item.year, item.count]),
+  },
+  {
+    tab: "species",
+    name: "Species",
+    headers: ["Name", "Key", "Count"],
+    rows: (items) =>
+      items.map((item) => [item.name || item.key, item.key, item.count]),
   },
   {
     tab: "basis_of_record",
