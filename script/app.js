@@ -374,7 +374,7 @@ async function runQuery() {
   tableSearch.disabled = true;
   exportBtn.disabled = true;
   viewOnGbifBtn.disabled = true;
-  setStatus("Querying GBIF…");
+  setStatus("Querying GBIF…", false, true);
 
   try {
     const { wkt, usedBboxFallback } = wktForQuery(currentArea);
@@ -386,6 +386,8 @@ async function runQuery() {
     viewOnGbifBtn.disabled = false;
     renderTable();
     submitBtn.disabled = false;
+
+    setStatus("Loading species names…", false, true);
 
     loadSpeciesInventory(wkt).then(() => {
       exportBtn.disabled = false;
@@ -410,7 +412,7 @@ async function searchInventoryCore(wkt) {
     limit: 0,
   });
 
-  setStatus("Fetching results from GBIF…");
+  setStatus("Fetching results from GBIF…", false, true);
 
   const [datasetCounts, publisherCounts, yearCounts, basisCounts] =
     await Promise.all([
@@ -420,7 +422,7 @@ async function searchInventoryCore(wkt) {
       fetchAllFacetValues(wkt, "basisOfRecord"),
     ]);
 
-  setStatus("Resolving names…");
+  setStatus("Resolving names…", false, true);
 
   const [datasets, publishers] = await Promise.all([
     enrich("DATASET_KEY", datasetCounts, true),
