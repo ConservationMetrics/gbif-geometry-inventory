@@ -693,7 +693,10 @@ function formatQueryError(error, geometry = "") {
 }
 
 function renderTable() {
-  if (!inventory) return;
+  if (!inventory) {
+    tablePagination.hidden = true;
+    return;
+  }
 
   if (activeTab === "species") {
     if (speciesLoading) {

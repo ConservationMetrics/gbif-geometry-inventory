@@ -42,7 +42,11 @@
         min-height: 100vh;
         font-family: "DM Sans", sans-serif;
         background:
-          radial-gradient(circle at top left, rgba(47, 125, 75, 0.08), transparent 28%),
+          radial-gradient(
+            circle at top left,
+            rgba(47, 125, 75, 0.08),
+            transparent 28%
+          ),
           var(--bg);
         color: var(--text);
       }
@@ -190,7 +194,10 @@
         font: inherit;
         font-weight: 600;
         cursor: pointer;
-        transition: background 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+        transition:
+          background 0.15s ease,
+          transform 0.15s ease,
+          opacity 0.15s ease;
       }
 
       .btn:disabled {
@@ -346,11 +353,15 @@
       }
 
       .table-pagination {
-        display: flex;
+        display: none;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
         padding: 12px 18px 18px;
+      }
+
+      .table-pagination:not([hidden]) {
+        display: flex;
       }
 
       .table-pagination-info {
@@ -482,9 +493,12 @@
         <h1>GBIF Geometry Inventory</h1>
         <p>
           Draw a bounding box or drop a GeoJSON file on the map to summarize
-          <a href="https://www.gbif.org/" target="_blank" rel="noopener">GBIF</a>
-          occurrence records in that area — species, datasets, publishers, years,
-          and record types. Everything runs in your browser.
+          <a href="https://www.gbif.org/" target="_blank" rel="noopener"
+            >GBIF</a
+          >
+          occurrence records in that area — species, datasets, publishers,
+          years, and record types. Everything runs in your browser. To view full
+          records, click the "View on GBIF" button after querying.
         </p>
       </div>
     </header>
@@ -494,13 +508,20 @@
         <div class="map-wrap">
           <div id="map" aria-label="Map for drawing a query area"></div>
           <div class="drop-overlay" id="dropOverlay" aria-hidden="true">
-            <span><i class="fa-solid fa-file-arrow-down"></i>Drop GeoJSON to set query area</span>
+            <span
+              ><i class="fa-solid fa-file-arrow-down"></i>Drop GeoJSON to set
+              query area</span
+            >
           </div>
           <div class="draw-frame-layer" id="drawFrameLayer" hidden>
             <div class="draw-frame-shade" aria-hidden="true">
               <div class="draw-frame" id="drawFrame"></div>
             </div>
-            <button type="button" class="btn btn-primary draw-frame-confirm" id="confirmFrameBtn">
+            <button
+              type="button"
+              class="btn btn-primary draw-frame-confirm"
+              id="confirmFrameBtn"
+            >
               Set this area
             </button>
           </div>
@@ -513,14 +534,26 @@
             <label class="btn btn-secondary" for="geojsonInput">
               <i class="fa-solid fa-file-arrow-up"></i> Upload GeoJSON
             </label>
-            <input id="geojsonInput" type="file" accept=".geojson,.json,application/geo+json,application/json" hidden />
+            <input
+              id="geojsonInput"
+              type="file"
+              accept=".geojson,.json,application/geo+json,application/json"
+              hidden
+            />
             <button type="button" class="btn btn-ghost" id="clearBtn" disabled>
               Clear
             </button>
           </div>
           <div class="toolbar-right">
-            <span class="hint" id="drawHint">Draw a box or drop GeoJSON on the map.</span>
-            <button type="button" class="btn btn-primary" id="submitBtn" disabled>
+            <span class="hint" id="drawHint"
+              >Draw a box or drop GeoJSON on the map.</span
+            >
+            <button
+              type="button"
+              class="btn btn-primary"
+              id="submitBtn"
+              disabled
+            >
               <i class="fa-solid fa-magnifying-glass"></i> Query GBIF
             </button>
           </div>
@@ -535,7 +568,12 @@
               <span class="summary-value" id="occurrenceCount">—</span>
             </div>
             <div class="summary-actions">
-              <button type="button" class="btn btn-secondary" id="viewOnGbifBtn" disabled>
+              <button
+                type="button"
+                class="btn btn-secondary"
+                id="viewOnGbifBtn"
+                disabled
+              >
                 <img
                   src="assets/gbif-icon.svg"
                   alt=""
@@ -546,18 +584,31 @@
                 />
                 View on GBIF
               </button>
-              <button type="button" class="btn btn-secondary" id="exportBtn" disabled>
+              <button
+                type="button"
+                class="btn btn-secondary"
+                id="exportBtn"
+                disabled
+              >
                 <i class="fa-solid fa-file-export"></i> Export XLS
               </button>
             </div>
           </div>
           <div class="results-controls">
             <div class="tabs" role="tablist" aria-label="Result categories">
-              <button type="button" class="tab active" data-tab="datasets">Datasets</button>
-              <button type="button" class="tab" data-tab="publishers">Publishers</button>
+              <button type="button" class="tab active" data-tab="datasets">
+                Datasets
+              </button>
+              <button type="button" class="tab" data-tab="publishers">
+                Publishers
+              </button>
               <button type="button" class="tab" data-tab="years">Years</button>
-              <button type="button" class="tab" data-tab="species">Species</button>
-              <button type="button" class="tab" data-tab="basis_of_record">Basis of record</button>
+              <button type="button" class="tab" data-tab="species">
+                Species
+              </button>
+              <button type="button" class="tab" data-tab="basis_of_record">
+                Basis of record
+              </button>
             </div>
             <div class="search-wrap">
               <i class="fa-solid fa-filter"></i>
@@ -581,14 +632,16 @@
             </thead>
             <tbody id="resultsBody">
               <tr class="placeholder-row">
-                <td colspan="2">Draw an area or drop GeoJSON, then query GBIF.</td>
+                <td colspan="2">
+                  Draw an area or drop GeoJSON, then query GBIF.
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <div class="table-pagination" id="tablePagination" hidden>
-          <span class="table-pagination-info" id="tablePageInfo">1–100 of 100</span>
+          <span class="table-pagination-info" id="tablePageInfo"></span>
           <div class="table-pagination-actions">
             <button type="button" class="btn btn-secondary" id="tablePrev">
               Previous
@@ -600,7 +653,12 @@
         </div>
 
         <p class="status" id="statusMessage" aria-live="polite">
-          <span class="status-spinner" id="statusSpinner" hidden aria-hidden="true"></span>
+          <span
+            class="status-spinner"
+            id="statusSpinner"
+            hidden
+            aria-hidden="true"
+          ></span>
           <span id="statusText"></span>
         </p>
       </section>
@@ -609,7 +667,10 @@
     <footer class="footer">
       <p class="footer-credit">
         Developed by
-        <a href="https://conservationmetrics.com/" target="_blank" rel="noopener"
+        <a
+          href="https://conservationmetrics.com/"
+          target="_blank"
+          rel="noopener"
           >Conservation Metrics, Inc.</a
         >
       </p>
