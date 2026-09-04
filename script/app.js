@@ -254,7 +254,7 @@ window.addEventListener("resize", hideSpeciesCard, { passive: true });
 
 let speciesCardHideTimer = null;
 
-function scheduleSpeciesCardHide(delay = 150) {
+function scheduleSpeciesCardHide(delay = 250) {
   // A pinned card ignores pointer drift; only an explicit click hides it.
   if (speciesCard.classList.contains("pinned")) return;
   clearTimeout(speciesCardHideTimer);
@@ -332,15 +332,32 @@ function showSpeciesCard(row, { pin = false, source = "hover" } = {}) {
       if (!box) return;
       if (!url) {
         // No usable photo: drop the reserved box instead of showing an
-        // empty placeholder.
+        // empty placeholder. Removing it shrinks the card, so the position
+        // computed below (based on the taller, photo-reserving layout) must
+        // be redone or the card can end up stranded away from the row.
         box.remove();
+        if (speciesCard.classList.contains("visible")) positionSpeciesCard(row);
         return;
       }
       if (!speciesCard.classList.contains("visible")) return;
       box.innerHTML = `<img src="${escapeHtml(url)}" alt="" referrerpolicy="no-referrer" />`;
+      positionSpeciesCard(row);
     });
   }
 
+  positionSpeciesCard(row);
+}
+
+// Sizes and coordinates the popover against the row it belongs to. Called
+// again whenever the card's content changes height after the initial paint
+// (e.g. the reserved photo box is dropped or filled in asynchronously),
+// since a stale top/left would leave the card floating away from the row.
+function positionSpeciesCard(row) {
+  // hideSpeciesCard() doesn't clear dataset.key, so a re-render between
+  // opening the card and an async reposition (e.g. loadGbifPhoto resolving)
+  // can pass a detached row here; its rect would be all-zero and snap the
+  // card to the viewport corner.
+  if (!row.isConnected) return;
   const pad = 12;
   const rowRect = row.getBoundingClientRect();
   const cardRect = speciesCard.getBoundingClientRect();
@@ -348,9 +365,13 @@ function showSpeciesCard(row, { pin = false, source = "hover" } = {}) {
     pad,
     Math.min(rowRect.left, window.innerWidth - cardRect.width - pad),
   );
-  let top = rowRect.bottom + 8;
+  // A 1px overlap, not a gap: rows sit flush with no dead zone between them,
+  // so a real gap here lets the pointer land on the next row (swapping the
+  // card) or the table background (triggering the hide timer) before it
+  // ever reaches the card.
+  let top = rowRect.bottom - 1;
   if (top + cardRect.height > window.innerHeight - pad) {
-    top = Math.max(pad, rowRect.top - cardRect.height - 8);
+    top = Math.max(pad, rowRect.top - cardRect.height + 1);
   }
   speciesCard.style.left = `${left}px`;
   speciesCard.style.top = `${top}px`;
