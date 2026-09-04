@@ -81,6 +81,37 @@
         color: var(--muted);
       }
 
+      .header-context {
+        margin-top: 12px;
+        max-width: 62ch;
+        font-size: 0.92rem;
+        color: var(--muted);
+      }
+
+      .header-context summary {
+        cursor: pointer;
+        color: var(--accent-dark);
+        font-weight: 600;
+        list-style: none;
+      }
+
+      .header-context summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .header-context summary::before {
+        content: "▸ ";
+      }
+
+      .header-context[open] summary::before {
+        content: "▾ ";
+      }
+
+      .header-context p {
+        margin: 8px 0 0;
+        line-height: 1.55;
+      }
+
       .layout {
         display: grid;
         gap: 18px;
@@ -912,10 +943,12 @@
       .footer .btn {
         background-color: #616161;
         color: #fff;
+        text-decoration: none;
       }
 
       .footer .btn:hover {
         background-color: #424242;
+        text-decoration: none;
       }
 
       @media (max-width: 860px) {
@@ -940,6 +973,21 @@
           download full records, press the <strong>View on GBIF</strong> button
           after querying.
         </p>
+        <details class="header-context">
+          <summary>Why this tool?</summary>
+          <p>
+            Built to help Indigenous communities and other land stewards see who
+            has published biodiversity records on their territory — who
+            collected data, when, and from which institution.
+            <a
+              href="https://docs.guardianconnector.net/guides/biodiversity/guide-gbif/"
+              target="_blank"
+              rel="noopener"
+              >Read the Guardian Connector GBIF guide</a
+            >
+            for more on using GBIF responsibly in community context.
+          </p>
+        </details>
       </div>
     </header>
 
