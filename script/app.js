@@ -1661,7 +1661,7 @@ function renderTable() {
   const end = Math.min(start + TABLE_PAGE_SIZE, visible.length);
   const pageRows = visible.slice(start, end);
 
-  resultsBody.innerHTML = visible
+  resultsBody.innerHTML = pageRows
     .map((row) => {
       if (row.group) {
         return `<tr class="group-row"><td colspan="2">${escapeHtml(row.group)}</td></tr>`;
@@ -1871,13 +1871,6 @@ const EXPORT_SHEETS = [
     name: "Years",
     headers: ["Year", "Count"],
     rows: (items) => items.map((item) => [item.year, item.count]),
-  },
-  {
-    tab: "species",
-    name: "Species",
-    headers: ["Name", "Key", "Count"],
-    rows: (items) =>
-      items.map((item) => [item.name || item.key, item.key, item.count]),
   },
   {
     tab: "basis_of_record",
