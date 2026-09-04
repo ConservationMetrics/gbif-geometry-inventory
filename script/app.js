@@ -38,6 +38,7 @@ const mapWrap = document.querySelector(".map-wrap");
 const occurrenceCount = document.getElementById("occurrenceCount");
 const tableSearch = document.getElementById("tableSearch");
 const exportBtn = document.getElementById("exportBtn");
+const viewOnGbifBtn = document.getElementById("viewOnGbifBtn");
 const resultsBody = document.getElementById("resultsBody");
 const tablePagination = document.getElementById("tablePagination");
 const tablePrev = document.getElementById("tablePrev");
@@ -83,6 +84,7 @@ clearBtn.addEventListener("click", clearArea);
 submitBtn.addEventListener("click", runQuery);
 geojsonInput.addEventListener("change", onGeoJSONSelected);
 exportBtn.addEventListener("click", exportToXls);
+viewOnGbifBtn.addEventListener("click", openOnGbif);
 bindDropHandlers();
 
 initMap();
@@ -333,6 +335,7 @@ function clearArea() {
   tableSearch.disabled = true;
   tableSearch.value = "";
   exportBtn.disabled = true;
+  viewOnGbifBtn.disabled = true;
   geojsonInput.value = "";
   tablePage = 0;
   tablePagination.hidden = true;
@@ -370,6 +373,7 @@ async function runQuery() {
   submitBtn.disabled = true;
   tableSearch.disabled = true;
   exportBtn.disabled = true;
+  viewOnGbifBtn.disabled = true;
   setStatus("Querying GBIF…");
 
   try {
@@ -379,18 +383,20 @@ async function runQuery() {
     updateTabLabels(inventory.totals);
     setActiveTab("datasets");
     tableSearch.disabled = false;
+    viewOnGbifBtn.disabled = false;
     renderTable();
     submitBtn.disabled = false;
 
     loadSpeciesInventory(wkt).then(() => {
       exportBtn.disabled = false;
       if (usedBboxFallback) {
-        setStatus(
+      setGeometryStatus(
+          wkt,
           "Results use the bounding box of your GeoJSON. The polygon was too complex for a direct GBIF browser query.",
         );
         return;
       }
-      setStatus(`Geometry: ${inventory.geometry}`);
+      setGeometryStatus(wkt);
     });
   } catch (error) {
     setStatus(formatQueryError(error, currentArea.wkt), true);
@@ -1084,6 +1090,26 @@ function boundsFromGeoJSON(geojson) {
 
 function formatCount(value) {
   return Number(value).toLocaleString();
+}
+
+function openOnGbif() {
+  if (!inventory?.geometry) return;
+  window.open(gbifOccurrenceSearchUrl(inventory.geometry), "_blank", "noopener");
+}
+
+function gbifOccurrenceSearchUrl(wkt) {
+  const params = new URLSearchParams({ geometry: wkt });
+  return `https://www.gbif.org/occurrence/search?${params}`;
+}
+
+function setGeometryStatus(wkt, note = "") {
+  const geometryLine = `Geometry: ${wkt}`;
+  statusText.innerHTML = note
+    ? `${escapeHtml(note)}<br>${escapeHtml(geometryLine)}`
+    : escapeHtml(geometryLine);
+  statusMessage.classList.remove("error");
+  statusSpinner.hidden = true;
+  statusMessage.setAttribute("aria-busy", "false");
 }
 
 function setStatus(message, isError = false, loading = false) {

@@ -262,6 +262,20 @@
         line-height: 1;
       }
 
+      .summary-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .btn-brand-icon {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        display: block;
+      }
+
       .results-controls {
         display: flex;
         gap: 12px;
@@ -520,9 +534,22 @@
               <span class="summary-label">Occurrences</span>
               <span class="summary-value" id="occurrenceCount">—</span>
             </div>
-            <button type="button" class="btn btn-secondary" id="exportBtn" disabled>
-              <i class="fa-solid fa-file-export"></i> Export XLS
-            </button>
+            <div class="summary-actions">
+              <button type="button" class="btn btn-secondary" id="viewOnGbifBtn" disabled>
+                <img
+                  src="assets/gbif-icon.svg"
+                  alt=""
+                  class="btn-brand-icon"
+                  width="16"
+                  height="16"
+                  aria-hidden="true"
+                />
+                View on GBIF
+              </button>
+              <button type="button" class="btn btn-secondary" id="exportBtn" disabled>
+                <i class="fa-solid fa-file-export"></i> Export XLS
+              </button>
+            </div>
           </div>
           <div class="results-controls">
             <div class="tabs" role="tablist" aria-label="Result categories">
