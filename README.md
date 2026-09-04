@@ -1,4 +1,4 @@
-# GBIF Geometry Inventory
+# GBIF Map Search
 
 Static web app to preview [GBIF](https://www.gbif.org/) occurrence data for a map area without downloading individual records.
 
