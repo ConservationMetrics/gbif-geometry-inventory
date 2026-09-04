@@ -3,7 +3,71 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GBIF Map Search</title>
+    <title>GBIF Map Search — Summarize biodiversity records by map area</title>
+    <meta
+      name="description"
+      content="Free browser tool to search GBIF occurrence data for any map area or GeoJSON boundary. Summarize species, datasets, publishers, and years — no GBIF account required."
+    />
+    <meta
+      name="keywords"
+      content="GBIF, biodiversity, occurrence records, map search, GeoJSON, species inventory, territory data, Indigenous communities, land stewards, Conservation Metrics"
+    />
+    <meta name="author" content="Conservation Metrics, Inc." />
+    <meta name="robots" content="index, follow" />
+    <link
+      rel="canonical"
+      href="https://conservationmetrics.github.io/gbif-map-search/"
+    />
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:title"
+      content="GBIF Map Search — Summarize biodiversity records by map area"
+    />
+    <meta
+      property="og:description"
+      content="Draw a map area or drop a GeoJSON boundary to summarize GBIF occurrence records — species, datasets, publishers, years, and more. Runs entirely in your browser."
+    />
+    <meta
+      property="og:url"
+      content="https://conservationmetrics.github.io/gbif-map-search/"
+    />
+    <meta property="og:site_name" content="GBIF Map Search" />
+    <meta
+      property="og:image"
+      content="https://conservationmetrics.github.io/gbif-map-search/favicon.png"
+    />
+    <meta name="twitter:card" content="summary" />
+    <meta
+      name="twitter:title"
+      content="GBIF Map Search — Summarize biodiversity records by map area"
+    />
+    <meta
+      name="twitter:description"
+      content="Free browser tool to search GBIF occurrence data for any map area or GeoJSON boundary. No account required."
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "GBIF Map Search",
+        "description": "Search and summarize GBIF biodiversity occurrence records for any map area or GeoJSON boundary. View species, datasets, publishers, observation years, and basis of record without downloading individual records.",
+        "url": "https://conservationmetrics.github.io/gbif-map-search/",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "Any",
+        "browserRequirements": "Requires JavaScript",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "author": {
+          "@type": "Organization",
+          "name": "Conservation Metrics, Inc.",
+          "url": "https://conservationmetrics.com/"
+        },
+        "keywords": "GBIF, biodiversity, occurrence records, map search, GeoJSON, species inventory, territory"
+      }
+    </script>
     <!-- GBIF leaf favicon, rotated 20° and hue-shifted so it's not identical to gbif.org's -->
     <link rel="icon" type="image/png" sizes="64x64" href="favicon.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
@@ -1167,7 +1231,7 @@
         >
       </p>
       <a
-        href="https://github.com/conservationmetrics/gbif-geometry-inventory"
+        href="https://github.com/conservationmetrics/gbif-map-search"
         class="btn"
         target="_blank"
         rel="noopener"

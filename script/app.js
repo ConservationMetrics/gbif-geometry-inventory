@@ -1896,7 +1896,7 @@ function exportToXls() {
   }
 
   const date = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(workbook, `gbif-geometry-inventory-${date}.xlsx`);
+  XLSX.writeFile(workbook, `gbif-map-search-${date}.xlsx`);
 }
 
 function bboxToWkt(bounds) {
